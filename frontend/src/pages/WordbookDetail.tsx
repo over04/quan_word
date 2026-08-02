@@ -191,6 +191,8 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
       {/* 悬浮胶囊导航 */}
       <nav className="fixed w-full top-0 z-40 py-4 px-4 md:px-8">
         <div className="max-w-7xl mx-auto">
+          {/* 外层 relative：设置浮层锚点（在滚动容器外，避免被 overflow-x-auto 裁剪） */}
+          <div className="relative">
           <div className="bg-white/70 backdrop-blur-md border border-white/40 shadow-sm rounded-full px-6 py-3 flex items-center gap-3 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <button
               onClick={onBack}
@@ -250,30 +252,19 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                   </button>
                 </div>
               )}
-              {/* 阅读设置 */}
-              <div className="relative">
-                <button
-                  onClick={() => setSettingsOpen((o) => !o)}
-                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${
-                    settingsOpen
-                      ? 'bg-charcoal text-ivory'
-                      : 'bg-sand/40 text-charcoal/70 hover:bg-sand/70'
-                  }`}
-                  aria-label="显示设置"
-                  aria-expanded={settingsOpen}
-                >
-                  <SettingsIcon className="w-4 h-4" />
-                </button>
-                {settingsOpen && (
-                  <SettingsPanel
-                    pageSize={pageSize}
-                    fontScale={fontScale}
-                    onChangePageSize={changePageSize}
-                    onChangeFontScale={changeFontScale}
-                    onClose={() => setSettingsOpen(false)}
-                  />
-                )}
-              </div>
+              {/* 显示设置 */}
+              <button
+                onClick={() => setSettingsOpen((o) => !o)}
+                className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 ${
+                  settingsOpen
+                    ? 'bg-charcoal text-ivory'
+                    : 'bg-sand/40 text-charcoal/70 hover:bg-sand/70'
+                }`}
+                aria-label="显示设置"
+                aria-expanded={settingsOpen}
+              >
+                <SettingsIcon className="w-4 h-4" />
+              </button>
               <button
                 onClick={handleOpenCreate}
                 className="inline-flex items-center gap-1.5 bg-charcoal text-ivory px-4 py-2 rounded-full text-sm font-medium hover:bg-charcoal/90 transition-all shadow-lg shadow-charcoal/10 whitespace-nowrap shrink-0"
@@ -282,6 +273,17 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                 添加单词
               </button>
             </div>
+          </div>
+          {/* 设置面板：渲染在滚动容器外，右上角对齐胶囊 */}
+          {settingsOpen && (
+            <SettingsPanel
+              pageSize={pageSize}
+              fontScale={fontScale}
+              onChangePageSize={changePageSize}
+              onChangeFontScale={changeFontScale}
+              onClose={() => setSettingsOpen(false)}
+            />
+          )}
           </div>
         </div>
       </nav>
