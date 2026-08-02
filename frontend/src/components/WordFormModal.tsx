@@ -63,7 +63,7 @@ export default function WordFormModal({ bookId, initial, onClose, onSaved }: Pro
         example: example.trim() || undefined,
       }
       if (initial) {
-        await words.update(initial.id, payload)
+        await words.update(bookId, initial.id, payload)
       } else {
         await words.create(bookId, payload)
       }

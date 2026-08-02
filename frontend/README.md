@@ -1,32 +1,18 @@
-# React + TypeScript + Vite
+# Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+单词本（quan_word）前端：React 19 + Vite 8 + TailwindCSS v4。
 
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+npm install
+npm run dev       # 开发服务器 :5173，/api 代理到 :3000
+npm run build     # tsc -b + vite build → dist/（rust-embed 编译期嵌入，需在 cargo build 前执行）
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## 目录
+
+- `src/api.ts` — fetch 封装，契约类型从 `src/generated/` 转发（ts-rs 生成，勿手改）
+- `src/generated/` — 后端 ts-rs 导出的共享契约类型；后端 `cargo test` 时刷新
+- `src/pages/`、`src/components/` — 页面与组件
+- `public/fonts/` — 自托管字体（无 Google Fonts CDN）
+
+设计系统见 `../docs/dev/style.md`。

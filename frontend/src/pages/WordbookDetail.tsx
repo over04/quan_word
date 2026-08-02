@@ -197,7 +197,7 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
   async function handleDelete(w: Word) {
     if (!window.confirm(`确定删除「${w.spelling}」吗？`)) return
     try {
-      await words.remove(w.id)
+      await words.remove(bookId, w.id)
       await onMutated()
     } catch (e) {
       setError(e instanceof Error ? e.message : '删除失败')

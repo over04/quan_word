@@ -1,45 +1,12 @@
-export interface Definition {
-  pos: string
-  meaning: string
-}
+// 共享契约类型由后端 ts-rs 生成（frontend/src/generated/，cargo test 时刷新），此处仅转发。
+import type { CreateWordReq } from './generated/CreateWordReq'
+import type { CreateWordbookReq } from './generated/CreateWordbookReq'
+import type { Definition } from './generated/Definition'
+import type { Page } from './generated/Page'
+import type { Word } from './generated/Word'
+import type { Wordbook } from './generated/Wordbook'
 
-export interface Wordbook {
-  id: number
-  name: string
-  description: string
-  icon: string
-  word_count: number
-}
-
-export interface Word {
-  id: number
-  wordbook_id: number
-  spelling: string
-  phonetic: string | null
-  definitions: Definition[]
-  example: string | null
-}
-
-export interface Page<T> {
-  items: T[]
-  total: number
-  page: number
-  page_size: number
-  total_pages: number
-}
-
-export interface CreateWordbookReq {
-  name: string
-  description?: string
-  icon?: string
-}
-
-export interface CreateWordReq {
-  spelling: string
-  phonetic?: string
-  definitions: Definition[]
-  example?: string
-}
+export type { CreateWordReq, CreateWordbookReq, Definition, Page, Word, Wordbook }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
@@ -90,7 +57,11 @@ export const words = {
   },
   create: (bookId: number, req: CreateWordReq) =>
     api<Word>(`/api/wordbooks/${bookId}/words`, { method: 'POST', body: JSON.stringify(req) }),
-  update: (id: number, req: CreateWordReq) =>
-    api<Word>(`/api/words/${id}`, { method: 'PUT', body: JSON.stringify(req) }),
-  remove: (id: number) => api<void>(`/api/words/${id}`, { method: 'DELETE' }),
+  update: (bookId: number, id: number, req: CreateWordReq) =>
+    api<Word>(`/api/wordbooks/${bookId}/words/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(req),
+    }),
+  remove: (bookId: number, id: number) =>
+    api<void>(`/api/wordbooks/${bookId}/words/${id}`, { method: 'DELETE' }),
 }
