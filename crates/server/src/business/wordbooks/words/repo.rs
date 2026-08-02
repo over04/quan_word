@@ -2,7 +2,7 @@ use entity::{word, wordbook};
 use sea_orm::sea_query::{Condition, Expr, ExprTrait};
 use sea_orm::{
     ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect,
+    QueryOrder, QuerySelect, TransactionTrait,
 };
 
 use super::sort::SortField;
@@ -127,5 +127,31 @@ impl WordRepo {
     /// 删除单词；返回受影响行数（0 = 不存在）。
     pub async fn delete_by_id(db: &DatabaseConnection, id: i32) -> Result<u64, sea_orm::DbErr> {
         Ok(word::Entity::delete_by_id(id).exec(db).await?.rows_affected)
+    }
+
+    /// 批量插入（事务）：任一步失败整体回滚；返回插入行数。
+    pub async fn insert_many(
+        db: &DatabaseConnection,
+        models: Vec<word::ActiveModel>,
+    ) -> Result<u64, sea_orm::DbErr> {
+        let n = models.len() as u64;
+        let txn = db.begin().await?;
+        word::Entity::insert_many(models).exec(&txn).await?;
+        txn.commit().await?;
+        Ok(n)
+    }
+
+    /// 批量删除（限定单词书归属）；返回受影响行数。
+    pub async fn batch_delete(
+        db: &DatabaseConnection,
+        book_id: i32,
+        ids: &[i32],
+    ) -> Result<u64, sea_orm::DbErr> {
+        Ok(word::Entity::delete_many()
+            .filter(word::Column::WordbookId.eq(book_id))
+            .filter(word::Column::Id.is_in(ids))
+            .exec(db)
+            .await?
+            .rows_affected)
     }
 }

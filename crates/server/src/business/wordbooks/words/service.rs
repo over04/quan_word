@@ -5,10 +5,13 @@ use entity::definition::Definition;
 use entity::word;
 use sea_orm::{DatabaseConnection, Set};
 
+use super::dto::batch::BatchDeleteWordsResp;
 use super::dto::create::CreateWordReq;
+use super::dto::import::ImportResp;
 use super::dto::resp::WordResp;
 use super::dto::update::UpdateWordReq;
 use super::error::WordError;
+use super::import;
 use super::order::WordOrder;
 use super::repo::WordRepo;
 use super::sort::SortField;
@@ -204,6 +207,136 @@ impl WordService {
         Ok(())
     }
 
+    /// 批量导入：解析模板文件 → 逐行校验 → 事务插入。原子性：任一行失败整体不导入。
+    pub async fn import_words(
+        state: &AppState,
+        book_id: i32,
+        file_name: &str,
+        bytes: Vec<u8>,
+    ) -> Result<ImportResp, WordError> {
+        let db = state.db.as_ref();
+        Self::ensure_book_exists(db, book_id).await?;
+        let ext = std::path::Path::new(file_name)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let rows = import::parse_file(&bytes, &ext)?;
+        let reqs = import::to_create_reqs(&rows).map_err(Self::format_import_errors)?;
+        if reqs.is_empty() {
+            return Ok(ImportResp { imported: 0 });
+        }
+        let now = Utc::now();
+        let mut models = Vec::with_capacity(reqs.len());
+        for req in reqs {
+            models.push(word::ActiveModel {
+                wordbook_id: Set(book_id),
+                spelling: Set(req.spelling),
+                phonetic: Set(req.phonetic),
+                definitions: Set(serde_json::to_value(req.definitions)?),
+                example: Set(req.example),
+                created_at: Set(now),
+                updated_at: Set(now),
+                ..Default::default()
+            });
+        }
+        let imported = WordRepo::insert_many(db, models).await?;
+        // 新词影响列表页 word_count 与洗牌 id 集合：两个缓存都失效
+        state.invalidate_wordbooks();
+        state.shuffle_cache.lock().clear();
+        Ok(ImportResp { imported })
+    }
+
+    /// 批量删除（校验归属该书）；返回实际删除数。
+    pub async fn batch_delete(
+        state: &AppState,
+        book_id: i32,
+        ids: Vec<i32>,
+    ) -> Result<BatchDeleteWordsResp, WordError> {
+        if ids.is_empty() {
+            return Err(WordError::EmptySelection);
+        }
+        let db = state.db.as_ref();
+        Self::ensure_book_exists(db, book_id).await?;
+        let deleted = WordRepo::batch_delete(db, book_id, &ids).await?;
+        // 删除影响列表页 word_count 与洗牌 id 集合：两个缓存都失效
+        state.invalidate_wordbooks();
+        state.shuffle_cache.lock().clear();
+        Ok(BatchDeleteWordsResp { deleted })
+    }
+
+    /// csv 模板：表头行，UTF-8 带 BOM（Excel/WPS 直接打开不乱码）。
+    pub fn template_csv() -> Vec<u8> {
+        let mut wtr = csv::Writer::from_writer(Vec::new());
+        wtr.write_record(import::HEADERS).expect("写入表头");
+        let mut buf = wtr.into_inner().expect("取回缓冲区");
+        let mut out = Vec::with_capacity(buf.len() + 3);
+        out.extend_from_slice(b"\xEF\xBB\xBF");
+        out.append(&mut buf);
+        out
+    }
+
+    /// xlsx 模板：Sheet1 表头（含样式与列宽），Sheet2 导入说明。
+    pub fn template_xlsx() -> Result<Vec<u8>, WordError> {
+        use rust_xlsxwriter::{Format, Workbook, Worksheet};
+        let err = |e: rust_xlsxwriter::XlsxError| WordError::Template(e.to_string());
+        let mut wb = Workbook::new();
+        // Sheet1：表头
+        let header = Format::new()
+            .set_bold()
+            .set_background_color("C58F6D")
+            .set_font_color("FFFFFF");
+        let mut sheet = Worksheet::new();
+        sheet.set_name("单词模板").map_err(err)?;
+        for (col, width) in [(0u16, 20.0), (1, 20.0), (2, 10.0), (3, 40.0), (4, 40.0)] {
+            sheet.set_column_width(col, width).map_err(err)?;
+        }
+        sheet.set_row_height(0, 22.0).map_err(err)?;
+        for (i, h) in import::HEADERS.iter().enumerate() {
+            sheet
+                .write_string_with_format(0, i as u16, *h, &header)
+                .map_err(err)?;
+        }
+        wb.push_worksheet(sheet);
+        // Sheet2：说明
+        let mut info = Worksheet::new();
+        info.set_name("说明").map_err(err)?;
+        let lines = [
+            "导入说明",
+            "1. 第一行为表头，请勿修改；从第二行开始填写，每行一个单词。",
+            "2. 释义列支持多个义项，用中文分号（；）或英文分号（;）分隔。",
+            "3. 义项可直接写词性前缀（如 n. 放弃），也可在词性列统一填写。",
+            "4. 词性可选：n. v. adj. adv. prep. conj. pron. num. art. interj. aux. abbr. phr.",
+            "5. 音标、例句可留空。",
+            "6. 保存为 .xlsx / .xls / .ods / .csv 后上传导入（WPS 请另存为 .xlsx 或 .csv）。",
+        ];
+        for (i, line) in lines.iter().enumerate() {
+            info.write_string(i as u32, 0, *line).map_err(err)?;
+        }
+        wb.push_worksheet(info);
+        wb.save_to_buffer().map_err(err)
+    }
+
+    /// 导入失败明细拼装：每行 `第 N 行：消息`，最多 20 条，超出追加总数。
+    fn format_import_errors(errors: Vec<(usize, String)>) -> WordError {
+        const MAX_DETAILS: usize = 20;
+        let total = errors.len();
+        let mut details = String::new();
+        for (i, (row, msg)) in errors.iter().take(MAX_DETAILS).enumerate() {
+            if i > 0 {
+                details.push('\n');
+            }
+            details.push_str(&format!("第 {row} 行：{msg}"));
+        }
+        if total > MAX_DETAILS {
+            details.push_str(&format!("\n…共 {total} 行有误"));
+        }
+        WordError::ImportFailed {
+            count: total,
+            details,
+        }
+    }
+
     async fn ensure_book_exists(db: &DatabaseConnection, book_id: i32) -> Result<(), WordError> {
         if WordRepo::find_wordbook(db, book_id).await?.is_none() {
             return Err(WordError::WordbookNotFound {
@@ -211,6 +344,11 @@ impl WordService {
             });
         }
         Ok(())
+    }
+
+    /// 供 router 层校验单词书存在（模板下载等场景）。
+    pub(crate) async fn book_exists(state: &AppState, book_id: i32) -> Result<(), WordError> {
+        Self::ensure_book_exists(state.db.as_ref(), book_id).await
     }
 
     fn to_resp(model: &word::Model) -> Result<WordResp, WordError> {
@@ -222,6 +360,8 @@ impl WordService {
             phonetic: model.phonetic.clone(),
             definitions,
             example: model.example.clone(),
+            created_at: model.created_at.to_rfc3339(),
+            updated_at: model.updated_at.to_rfc3339(),
         })
     }
 
@@ -245,7 +385,7 @@ impl WordService {
     }
 
     /// 创建/更新前的字段校验：拼写、释义数量与词性白名单。
-    fn validate(spelling: &str, definitions: &[Definition]) -> Result<(), WordError> {
+    pub(crate) fn validate(spelling: &str, definitions: &[Definition]) -> Result<(), WordError> {
         if spelling.trim().is_empty() {
             return Err(WordError::EmptySpelling);
         }

@@ -4,4 +4,8 @@ import type { Definition } from "./Definition";
 /**
  * 单词响应体。
  */
-export type Word = { id: number, wordbook_id: number, spelling: string, phonetic: string | null, definitions: Array<Definition>, example: string | null, };
+export type Word = { id: number, wordbook_id: number, spelling: string, phonetic: string | null, definitions: Array<Definition>, example: string | null, 
+/**
+ * RFC3339 字符串（ts-rs 无 chrono feature，用 String 而非 DateTimeUtc）
+ */
+created_at: string, updated_at: string, };

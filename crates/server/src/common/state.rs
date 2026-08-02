@@ -18,6 +18,8 @@ type ShuffleCache = Arc<Mutex<HashMap<(i32, String), Vec<i32>>>>;
 #[derive(Clone)]
 pub struct AppState {
     pub db: Arc<DatabaseConnection>,
+    /// 访问密钥（config server.auth_key）；None = 未启用鉴权
+    pub api_key: Option<Arc<str>>,
     /// 单词书列表缓存（含 word_count）；None = 未缓存
     pub wordbooks_cache: Arc<Mutex<Option<Arc<Vec<WordbookResp>>>>>,
     pub shuffle_cache: ShuffleCache,

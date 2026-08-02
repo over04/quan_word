@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react'
 import { words, type Page, type Word } from '../api'
+import ImportModal from './ImportModal'
 import Pagination from './Pagination'
-import { ArrowsUpDownIcon, PencilIcon, SearchIcon, TrashIcon } from './Icons'
+import {
+  ArrowsUpDownIcon,
+  PencilIcon,
+  SearchIcon,
+  TrashIcon,
+  UploadIcon,
+} from './Icons'
 
 interface Props {
   bookId: number
@@ -9,6 +16,8 @@ interface Props {
   refreshKey: number
   onEdit: (w: Word) => void
   onDelete: (w: Word) => void
+  /** 导入/批量删除等内部变更后通知父级（刷新书信息与缓存） */
+  onMutated: () => void
 }
 
 const PAGE_SIZE = 20
@@ -23,8 +32,13 @@ function summary(w: Word): string {
   return w.definitions.map((d) => (d.pos ? `${d.pos} ${d.meaning}` : d.meaning)).join('；')
 }
 
-/** 列表模式：书内搜索 + 排序 + 分页（自包含数据加载） */
-export default function WordTable({ bookId, refreshKey, onEdit, onDelete }: Props) {
+function formatDate(iso: string): string {
+  const d = new Date(iso)
+  return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('zh-CN')
+}
+
+/** 列表模式：书内搜索 + 排序 + 分页 + 批量管理（自包含数据加载） */
+export default function WordTable({ bookId, refreshKey, onEdit, onDelete, onMutated }: Props) {
   const [q, setQ] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
   const [sort, setSort] = useState('created_at')
@@ -32,6 +46,9 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete }: Prop
   const [page, setPage] = useState(1)
   const [data, setData] = useState<Page<Word> | null>(null)
   const [error, setError] = useState('')
+  // 批量选择：Set 跨页累计保留；删除/导入成功后清空
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [importOpen, setImportOpen] = useState(false)
 
   // 搜索防抖：停止输入 400ms 后生效
   useEffect(() => {
@@ -69,9 +86,46 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete }: Prop
     setPage(1)
   }
 
+  const pageIds = data?.items.map((w) => w.id) ?? []
+  const allSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id))
+
+  function toggleAll() {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allSelected) {
+        for (const id of pageIds) next.delete(id)
+      } else {
+        for (const id of pageIds) next.add(id)
+      }
+      return next
+    })
+  }
+
+  function toggleOne(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  async function handleBatchDelete() {
+    const ids = [...selected]
+    if (ids.length === 0) return
+    if (!window.confirm(`确定删除选中的 ${ids.length} 个单词吗？`)) return
+    try {
+      await words.batchDelete(bookId, ids)
+      setSelected(new Set())
+      await onMutated()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '删除失败')
+    }
+  }
+
   return (
     <div className="animate-fade-in-up">
-      {/* 工具条：搜索 + 排序 */}
+      {/* 工具条：搜索 + 排序 + 导入 */}
       <div className="flex flex-wrap items-center gap-3 mb-5">
         <div className="relative flex-1 min-w-56 max-w-sm">
           <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-charcoal/35" />
@@ -112,8 +166,31 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete }: Prop
             <ArrowsUpDownIcon className="w-3.5 h-3.5" />
             {order === 'asc' ? '升序' : '降序'}
           </button>
+          <button
+            onClick={() => setImportOpen(true)}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full border border-charcoal/15 text-sm font-medium text-charcoal/70 hover:text-charcoal hover:border-charcoal/30 transition-all whitespace-nowrap"
+          >
+            <UploadIcon className="w-3.5 h-3.5" />
+            导入
+          </button>
         </div>
       </div>
+
+      {/* 批量操作条：选中后出现 */}
+      {selected.size > 0 && (
+        <div className="flex items-center gap-3 mb-4 px-5 py-3 rounded-2xl bg-sand/40 border border-sand">
+          <span className="text-sm text-charcoal/70 tabular-nums">
+            已选 <span className="font-semibold text-charcoal">{selected.size}</span> 项
+          </span>
+          <button
+            onClick={handleBatchDelete}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full border border-charcoal/10 text-charcoal/60 text-xs font-medium hover:border-red-300 hover:text-red-400 transition-colors whitespace-nowrap"
+          >
+            <TrashIcon className="w-3.5 h-3.5" />
+            删除所选
+          </button>
+        </div>
+      )}
 
       {error && <p className="text-red-600 text-center mb-4">{error}</p>}
 
@@ -130,36 +207,76 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete }: Prop
             <table className="hidden md:table w-full text-left">
               <thead>
                 <tr className="text-xs font-bold text-charcoal/40 uppercase tracking-widest">
-                  <th className="px-7 py-5">单词</th>
-                  <th className="px-7 py-5">音标</th>
-                  <th className="px-7 py-5">释义</th>
-                  <th className="px-7 py-5 text-right w-44">操作</th>
+                  <th className="px-5 py-5 w-12">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={toggleAll}
+                      aria-label="全选本页"
+                      className="accent-charcoal cursor-pointer"
+                    />
+                  </th>
+                  <th className="px-5 py-5">单词</th>
+                  <th className="px-5 py-5">音标</th>
+                  <th className="px-5 py-5">释义</th>
+                  <th className="px-5 py-5 w-28">添加时间</th>
+                  <th className="px-5 py-5 text-right w-44">操作</th>
                 </tr>
               </thead>
               <tbody>
                 {data.items.map((w, i) => (
                   <tr
                     key={w.id}
-                    className={`transition-colors hover:bg-sand/20 ${
+                    onClick={() => onEdit(w)}
+                    className={`cursor-pointer transition-colors hover:bg-sand/20 ${
                       i < data.items.length - 1 ? 'border-b border-charcoal/5' : ''
                     }`}
                   >
-                    <td className="px-7 py-3.5 font-serif text-base text-charcoal">{w.spelling}</td>
-                    <td className="px-7 py-3.5 text-sm text-charcoal/45">{w.phonetic ?? '—'}</td>
-                    <td className="px-7 py-3.5 text-sm text-charcoal/70 leading-relaxed">
-                      {summary(w)}
+                    <td className="px-5 py-3.5">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(w.id)}
+                        onChange={() => toggleOne(w.id)}
+                        onClick={(e) => e.stopPropagation()}
+                        aria-label={`选择 ${w.spelling}`}
+                        className="accent-charcoal cursor-pointer"
+                      />
                     </td>
-                    <td className="px-7 py-3.5 whitespace-nowrap">
+                    <td className="px-5 py-3.5 font-serif text-base text-charcoal">{w.spelling}</td>
+                    <td className="px-5 py-3.5 text-sm text-charcoal/45">{w.phonetic ?? '—'}</td>
+                    <td className="px-5 py-3.5 text-sm text-charcoal/70 leading-relaxed">
+                      {w.definitions.map((d, di) => (
+                        <span key={di}>
+                          {d.pos && (
+                            <span className="inline-block px-1.5 py-0.5 rounded bg-sand/60 text-charcoal/60 text-[11px] font-medium mr-1 align-middle">
+                              {d.pos}
+                            </span>
+                          )}
+                          {d.meaning}
+                          {di < w.definitions.length - 1 && '；'}
+                        </span>
+                      ))}
+                    </td>
+                    <td className="px-5 py-3.5 text-xs text-charcoal/45 whitespace-nowrap tabular-nums">
+                      {formatDate(w.created_at)}
+                    </td>
+                    <td className="px-5 py-3.5 whitespace-nowrap">
                       <div className="flex justify-end gap-2">
                         <button
-                          onClick={() => onEdit(w)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onEdit(w)
+                          }}
                           className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-sand/50 text-charcoal/80 text-xs font-medium hover:bg-sand/80 transition-colors whitespace-nowrap"
                         >
                           <PencilIcon className="w-3.5 h-3.5" />
                           编辑
                         </button>
                         <button
-                          onClick={() => onDelete(w)}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            onDelete(w)
+                          }}
                           className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-charcoal/10 text-charcoal/50 text-xs font-medium hover:border-red-300 hover:text-red-400 transition-colors whitespace-nowrap"
                         >
                           <TrashIcon className="w-3.5 h-3.5" />
@@ -175,22 +292,41 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete }: Prop
             {/* 移动端卡片 */}
             <div className="md:hidden divide-y divide-charcoal/5">
               {data.items.map((w) => (
-                <div key={w.id} className="px-6 py-5">
-                  <div className="flex items-baseline justify-between gap-3">
-                    <span className="font-serif text-base text-charcoal">{w.spelling}</span>
-                    {w.phonetic && <span className="text-xs text-charcoal/45">{w.phonetic}</span>}
+                <div key={w.id} onClick={() => onEdit(w)} className="px-6 py-5 cursor-pointer">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(w.id)}
+                      onChange={() => toggleOne(w.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      aria-label={`选择 ${w.spelling}`}
+                      className="accent-charcoal cursor-pointer shrink-0"
+                    />
+                    <div className="flex items-baseline justify-between gap-3 flex-1 min-w-0">
+                      <span className="font-serif text-base text-charcoal truncate">{w.spelling}</span>
+                      {w.phonetic && <span className="text-xs text-charcoal/45 shrink-0">{w.phonetic}</span>}
+                    </div>
+                    <span className="text-[11px] text-charcoal/40 whitespace-nowrap shrink-0 tabular-nums">
+                      {formatDate(w.created_at)}
+                    </span>
                   </div>
-                  <p className="mt-1 text-sm text-charcoal/70 leading-relaxed">{summary(w)}</p>
-                  <div className="mt-3 flex gap-2">
+                  <p className="mt-1.5 ml-9 text-sm text-charcoal/70 leading-relaxed">{summary(w)}</p>
+                  <div className="mt-3 ml-9 flex gap-2">
                     <button
-                      onClick={() => onEdit(w)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onEdit(w)
+                      }}
                       className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-sand/50 text-charcoal/80 text-xs font-medium whitespace-nowrap"
                     >
                       <PencilIcon className="w-3 h-3" />
                       编辑
                     </button>
                     <button
-                      onClick={() => onDelete(w)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onDelete(w)
+                      }}
                       className="inline-flex items-center gap-1 px-3 py-1 rounded-full border border-charcoal/10 text-charcoal/50 text-xs font-medium whitespace-nowrap"
                     >
                       <TrashIcon className="w-3 h-3" />
@@ -205,6 +341,18 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete }: Prop
       </div>
       {data && data.total_pages > 1 && (
         <Pagination page={page} totalPages={data.total_pages} onPrev={() => setPage((p) => p - 1)} onNext={() => setPage((p) => p + 1)} />
+      )}
+
+      {importOpen && (
+        <ImportModal
+          bookId={bookId}
+          onClose={() => setImportOpen(false)}
+          onImported={async () => {
+            setImportOpen(false)
+            setSelected(new Set())
+            await onMutated()
+          }}
+        />
       )}
     </div>
   )

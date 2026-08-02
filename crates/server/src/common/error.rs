@@ -16,6 +16,8 @@ pub enum ApiError {
     NotFound(String),
     #[error("{0}")]
     BadRequest(String),
+    #[error("{0}")]
+    Unauthorized(String),
     #[error("数据库错误: {0}")]
     Db(#[from] DbErr),
 }
@@ -25,6 +27,7 @@ impl IntoResponse for ApiError {
         let (status, msg) = match self {
             ApiError::NotFound(m) => (StatusCode::NOT_FOUND, m),
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
+            ApiError::Unauthorized(m) => (StatusCode::UNAUTHORIZED, m),
             ApiError::Db(e) => {
                 tracing::error!("数据库错误: {e}");
                 (
@@ -53,6 +56,10 @@ mod tests {
         assert_eq!(
             ApiError::BadRequest("x".into()).into_response().status(),
             StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            ApiError::Unauthorized("x".into()).into_response().status(),
+            StatusCode::UNAUTHORIZED
         );
         assert_eq!(
             ApiError::Db(sea_orm::DbErr::Custom("x".into()))

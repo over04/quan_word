@@ -347,6 +347,7 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
               refreshKey={listRefresh}
               onEdit={handleOpenEdit}
               onDelete={handleDelete}
+              onMutated={onMutated}
             />
           </div>
         )}

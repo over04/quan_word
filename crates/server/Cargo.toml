@@ -9,7 +9,7 @@ entity = { path = "../entity" }
 migration = { path = "../migration" }
 sea-orm = { workspace = true, features = ["sqlx-sqlite", "sqlx-postgres", "runtime-tokio-rustls"] }
 sea-orm-migration = { workspace = true }
-axum = "0.8"
+axum = { version = "0.8", features = ["multipart"] }
 tokio = { version = "1", features = ["full"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -25,3 +25,11 @@ mime_guess = "2"
 tower-http = { version = "0.7.0", features = ["compression-gzip"] }
 parking_lot = "0.12.5"
 ts-rs = { workspace = true }
+subtle = "2"
+csv = "1.4.0"
+calamine = "0.36.1"
+encoding_rs = "0.8.35"
+rust_xlsxwriter = "0.97.0"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

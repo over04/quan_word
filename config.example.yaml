@@ -4,6 +4,8 @@
 server:
   host: "0.0.0.0"
   port: 3000
+  # 访问密钥：设置后所有 /api 请求必须携带 Authorization: Bearer <密钥>（或 X-Api-Key 头），未设置则不启用
+  # auth_key: "change-me"
 database:
   url: "sqlite://./data/quan_word.db?mode=rwc"
 # 切换 PostgreSQL 时改为：

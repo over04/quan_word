@@ -29,6 +29,16 @@ pub enum WordError {
     InvalidSortDir { dir: String },
     #[error("释义数据格式错误: {0}")]
     DefinitionsJson(#[from] serde_json::Error),
+    #[error("未选择要删除的单词")]
+    EmptySelection,
+    #[error("不支持的文件格式: {ext}，仅支持 csv / xlsx / xls / ods")]
+    UnsupportedFormat { ext: String },
+    #[error("导入失败：共 {count} 行有误\n{details}")]
+    ImportFailed { count: usize, details: String },
+    #[error("导入行数超过上限（{limit} 行）")]
+    TooManyRows { limit: usize },
+    #[error("模板生成失败: {0}")]
+    Template(String),
     #[error(transparent)]
     Db(#[from] DbErr),
 }
@@ -70,6 +80,17 @@ mod tests {
         ));
         assert!(matches!(
             ApiError::from(WordError::InvalidOrder { order: "x".into() }),
+            ApiError::BadRequest(_)
+        ));
+        assert!(matches!(
+            ApiError::from(WordError::ImportFailed {
+                count: 2,
+                details: "第 2 行：释义不能为空".into(),
+            }),
+            ApiError::BadRequest(_)
+        ));
+        assert!(matches!(
+            ApiError::from(WordError::EmptySelection),
             ApiError::BadRequest(_)
         ));
     }

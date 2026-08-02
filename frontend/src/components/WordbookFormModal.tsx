@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { wordbooks, type Wordbook } from '../api'
+import Modal from './Modal'
 import { BookIcon, PencilIcon } from './Icons'
 
 interface Props {
@@ -43,15 +44,8 @@ export default function WordbookFormModal({ initial, onClose, onSaved }: Props) 
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-charcoal/25 backdrop-blur-sm animate-fade-in"
-      onClick={onClose}
-    >
-      <form
-        onSubmit={handleSubmit}
-        onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md bg-white rounded-[2rem] border border-charcoal/5 shadow-2xl shadow-charcoal/15 p-8 md:p-9 animate-pop-in"
-      >
+    <Modal onClose={onClose} maxWidth="max-w-md">
+      <form onSubmit={handleSubmit}>
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-sage flex items-center justify-center text-white">
             {initial ? <PencilIcon className="w-4 h-4" /> : <BookIcon className="w-4 h-4" />}
@@ -107,6 +101,6 @@ export default function WordbookFormModal({ initial, onClose, onSaved }: Props) 
           </button>
         </div>
       </form>
-    </div>
+    </Modal>
   )
 }

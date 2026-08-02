@@ -12,4 +12,7 @@ pub struct WordResp {
     pub phonetic: Option<String>,
     pub definitions: Vec<Definition>,
     pub example: Option<String>,
+    /// RFC3339 字符串（ts-rs 无 chrono feature，用 String 而非 DateTimeUtc）
+    pub created_at: String,
+    pub updated_at: String,
 }

@@ -1,15 +1,20 @@
 use axum::{
-    extract::{Path, Query, State},
-    http::StatusCode,
-    routing::{get, put},
+    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    routing::{get, post, put},
     Json, Router,
 };
 
+use super::dto::batch::BatchDeleteWordsReq;
+use super::dto::batch::BatchDeleteWordsResp;
 use super::dto::create::CreateWordReq;
+use super::dto::import::ImportResp;
 use super::dto::list::ListWordsQuery;
 use super::dto::resp::WordResp;
 use super::dto::search::SearchWordsQuery;
+use super::dto::template::TemplateQuery;
 use super::dto::update::UpdateWordReq;
+use super::error::WordError;
 use super::order::WordOrder;
 use super::service::WordService;
 use super::sort::SortField;
@@ -27,6 +32,18 @@ pub fn router() -> Router<AppState> {
             get(list_words).post(create_word),
         )
         .route("/api/wordbooks/{book_id}/words/query", get(query_words))
+        .route(
+            "/api/wordbooks/{book_id}/words/template",
+            get(download_template),
+        )
+        .route(
+            "/api/wordbooks/{book_id}/words/import",
+            post(import_words).layer(DefaultBodyLimit::max(10 * 1024 * 1024)),
+        )
+        .route(
+            "/api/wordbooks/{book_id}/words/batch-delete",
+            post(batch_delete_words),
+        )
         .route(
             "/api/wordbooks/{book_id}/words/{id}",
             put(update_word).delete(delete_word),
@@ -82,4 +99,87 @@ pub async fn delete_word(
 ) -> Result<StatusCode, ApiError> {
     WordService::delete(&state, book_id, id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// 下载导入模板：format=csv|xlsx，缺省 csv。
+pub async fn download_template(
+    State(state): State<AppState>,
+    Path(book_id): Path<i32>,
+    Query(query): Query<TemplateQuery>,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
+    // 校验单词书存在（404 提示更友好）
+    WordService::book_exists(&state, book_id).await?;
+    let format = query.format.as_deref().unwrap_or("csv");
+    match format {
+        "csv" => {
+            let body = WordService::template_csv();
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/csv; charset=utf-8"),
+            );
+            headers.insert(
+                header::CONTENT_DISPOSITION,
+                HeaderValue::from_static("attachment; filename=\"words_template.csv\""),
+            );
+            Ok((headers, body))
+        }
+        "xlsx" => {
+            let body = WordService::template_xlsx()?;
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static(
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                ),
+            );
+            headers.insert(
+                header::CONTENT_DISPOSITION,
+                HeaderValue::from_static("attachment; filename=\"words_template.xlsx\""),
+            );
+            Ok((headers, body))
+        }
+        other => Err(ApiError::from(WordError::UnsupportedFormat {
+            ext: other.to_string(),
+        })),
+    }
+}
+
+/// 上传导入：multipart 字段 file，接受 csv / xlsx / xls / ods。
+pub async fn import_words(
+    State(state): State<AppState>,
+    Path(book_id): Path<i32>,
+    mut multipart: Multipart,
+) -> Result<Json<ImportResp>, ApiError> {
+    let mut file: Option<(String, Vec<u8>)> = None;
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("上传失败: {e}")))?
+    {
+        if field.name() == Some("file") {
+            let name = field.file_name().unwrap_or("").to_string();
+            let bytes = field
+                .bytes()
+                .await
+                .map_err(|e| ApiError::BadRequest(format!("上传失败: {e}")))?
+                .to_vec();
+            file = Some((name, bytes));
+        }
+    }
+    let (name, bytes) = file.ok_or_else(|| ApiError::BadRequest("未收到文件".into()))?;
+    Ok(Json(
+        WordService::import_words(&state, book_id, &name, bytes).await?,
+    ))
+}
+
+/// 批量删除单词（限定归属该书）。
+pub async fn batch_delete_words(
+    State(state): State<AppState>,
+    Path(book_id): Path<i32>,
+    Json(req): Json<BatchDeleteWordsReq>,
+) -> Result<Json<BatchDeleteWordsResp>, ApiError> {
+    Ok(Json(
+        WordService::batch_delete(&state, book_id, req.ids).await?,
+    ))
 }
