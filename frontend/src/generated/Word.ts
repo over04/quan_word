@@ -6,6 +6,10 @@ import type { Definition } from "./Definition";
  */
 export type Word = { id: number, wordbook_id: number, spelling: string, phonetic: string | null, definitions: Array<Definition>, example: string | null, 
 /**
+ * 单词的标签 id 数组（按 id 升序）
+ */
+tags: Array<number>, 
+/**
  * RFC3339 字符串（ts-rs 无 chrono feature，用 String 而非 DateTimeUtc）
  */
 created_at: string, updated_at: string, };

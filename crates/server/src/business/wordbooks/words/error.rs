@@ -27,6 +27,12 @@ pub enum WordError {
     InvalidSortField { field: String },
     #[error("order 必须为 asc 或 desc: {dir}")]
     InvalidSortDir { dir: String },
+    #[error("标签参数不合法: {tag}")]
+    InvalidTagIds { tag: String },
+    #[error("标签 {tag_id} 不属于单词书 {wordbook_id}")]
+    TagNotInWordbook { tag_id: i32, wordbook_id: i32 },
+    #[error("请选择要添加的标签")]
+    EmptyTagSelection,
     #[error("释义数据格式错误: {0}")]
     DefinitionsJson(#[from] serde_json::Error),
     #[error("未选择要删除的单词")]
@@ -91,6 +97,21 @@ mod tests {
         ));
         assert!(matches!(
             ApiError::from(WordError::EmptySelection),
+            ApiError::BadRequest(_)
+        ));
+        assert!(matches!(
+            ApiError::from(WordError::TagNotInWordbook {
+                tag_id: 1,
+                wordbook_id: 2,
+            }),
+            ApiError::BadRequest(_)
+        ));
+        assert!(matches!(
+            ApiError::from(WordError::EmptyTagSelection),
+            ApiError::BadRequest(_)
+        ));
+        assert!(matches!(
+            ApiError::from(WordError::InvalidTagIds { tag: "abc".into() }),
             ApiError::BadRequest(_)
         ));
     }

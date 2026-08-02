@@ -1,6 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { wordbooks, words, type Page, type Word, type Wordbook } from '../api'
+import {
+  tags as tagApi,
+  wordbooks,
+  words,
+  type Page,
+  type Tag,
+  type Word,
+  type Wordbook,
+} from '../api'
 import PaperBookView from '../components/PaperBookView'
+import TagManageModal from '../components/TagManageModal'
 import WordTable from '../components/WordTable'
 import WordFormModal from '../components/WordFormModal'
 import SettingsPanel from '../components/SettingsPanel'
@@ -11,6 +20,7 @@ import {
   PaperIcon,
   PlusIcon,
   SettingsIcon,
+  TagIcon,
 } from '../components/Icons'
 
 interface Props {
@@ -40,10 +50,17 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
   const [coverDef, setCoverDef] = useState(false)
   // 打乱：seed 非空 = 随机顺序浏览（确定性，翻页稳定）
   const [shuffleSeed, setShuffleSeed] = useState<string | null>(null)
+  // 标记模式：纸质书点击词块快速增删标签（不遮挡）
+  const [markMode, setMarkMode] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [error, setError] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<Word | null>(null)
+  // 标签：该书全部标签 + 筛选（多选交集，两模式共享）+ 管理弹窗
+  const [tags, setTags] = useState<Tag[]>([])
+  const [filterTagIds, setFilterTagIds] = useState<number[]>([])
+  const [tagFilterOpen, setTagFilterOpen] = useState(false)
+  const [manageTagsOpen, setManageTagsOpen] = useState(false)
   // 列表模式刷新信号：增删改后递增，WordTable 重新查询
   const [listRefresh, setListRefresh] = useState(0)
 
@@ -69,39 +86,68 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     }
   }, [bookId])
 
+  // 标签列表只加载一次（筛选与表单共用）
+  useEffect(() => {
+    let alive = true
+    tagApi
+      .list(bookId)
+      .then((t) => {
+        if (alive) setTags(t)
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : '加载失败'))
+    return () => {
+      alive = false
+    }
+  }, [bookId])
+
   const loadPage = useCallback(
-    async (p: number, size: number, opts?: { prefetch?: boolean; seed?: string | null }) => {
-      // 排序参数影响内容，缓存 key 必须包含 seed
+    async (p: number, size: number, opts?: { prefetch?: boolean; seed?: string | null; tagIds?: number[] }) => {
+      // 排序与筛选参数影响内容，缓存 key 必须包含 seed 与 tagIds
       const seed = opts?.seed !== undefined ? opts.seed : shuffleSeed
-      const key = `${bookId}:${p}:${size}:${seed ?? ''}`
+      const tagIds = opts?.tagIds ?? filterTagIds
+      const key = `${bookId}:${p}:${size}:${seed ?? ''}:${tagIds.join(',')}`
+      const tagParam = tagIds.length > 0 ? tagIds.join(',') : undefined
       const cached = cache.current.get(key)
       if (cached) {
         setData(cached)
-        if (opts?.prefetch !== false) prefetchNeighbors(p, size, cached.total_pages, seed)
-        syncNeighbor(p, size, seed)
+        if (opts?.prefetch !== false) prefetchNeighbors(p, size, cached.total_pages, seed, tagIds)
+        syncNeighbor(p, size, seed, tagIds)
         return
       }
       try {
         setError('')
-        const paged = await words.list(bookId, p, size, seed ? { order: 'random', seed } : undefined)
+        const paged = await words.list(bookId, p, size, {
+          ...(seed ? { order: 'random', seed } : {}),
+          ...(tagParam ? { tag: tagParam } : {}),
+        })
         cache.current.set(key, paged)
         setData(paged)
-        if (opts?.prefetch !== false) prefetchNeighbors(p, size, paged.total_pages, seed)
-        syncNeighbor(p, size, seed)
+        if (opts?.prefetch !== false) prefetchNeighbors(p, size, paged.total_pages, seed, tagIds)
+        syncNeighbor(p, size, seed, tagIds)
       } catch (e) {
         setError(e instanceof Error ? e.message : '加载失败')
       }
     },
-    [bookId, prefetchNeighbors, shuffleSeed],
+    [bookId, prefetchNeighbors, shuffleSeed, filterTagIds],
   )
 
   /** 预取相邻页（缓存命中与网络加载两条路径都执行，保证滑动翻页时相邻页可见） */
-  function prefetchNeighbors(p: number, size: number, totalPages: number, seed: string | null) {
-    const keyOf = (pp: number) => `${bookId}:${pp}:${size}:${seed ?? ''}`
+  function prefetchNeighbors(
+    p: number,
+    size: number,
+    totalPages: number,
+    seed: string | null,
+    tagIds: number[],
+  ) {
+    const tagParam = tagIds.length > 0 ? tagIds.join(',') : undefined
+    const keyOf = (pp: number) => `${bookId}:${pp}:${size}:${seed ?? ''}:${tagIds.join(',')}`
     if (p > 1 && !cache.current.has(keyOf(p - 1))) {
       const pk = keyOf(p - 1)
       words
-        .list(bookId, p - 1, size, seed ? { order: 'random', seed } : undefined)
+        .list(bookId, p - 1, size, {
+          ...(seed ? { order: 'random', seed } : {}),
+          ...(tagParam ? { tag: tagParam } : {}),
+        })
         .then((r) => {
           cache.current.set(pk, r)
           setNeighbor((n) => ({ ...n, prev: r }))
@@ -111,7 +157,10 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     if (p < totalPages && !cache.current.has(keyOf(p + 1))) {
       const nk = keyOf(p + 1)
       words
-        .list(bookId, p + 1, size, seed ? { order: 'random', seed } : undefined)
+        .list(bookId, p + 1, size, {
+          ...(seed ? { order: 'random', seed } : {}),
+          ...(tagParam ? { tag: tagParam } : {}),
+        })
         .then((r) => {
           cache.current.set(nk, r)
           setNeighbor((n) => ({ ...n, next: r }))
@@ -121,21 +170,61 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
   }
 
   /** 从缓存同步相邻页数据（翻页后相邻页已预取或已缓存） */
-  function syncNeighbor(p: number, size: number, seed: string | null) {
-    const keyOf = (pp: number) => `${bookId}:${pp}:${size}:${seed ?? ''}`
+  function syncNeighbor(p: number, size: number, seed: string | null, tagIds: number[]) {
+    const keyOf = (pp: number) => `${bookId}:${pp}:${size}:${seed ?? ''}:${tagIds.join(',')}`
     setNeighbor({
       prev: cache.current.get(keyOf(p - 1)) ?? null,
       next: cache.current.get(keyOf(p + 1)) ?? null,
     })
   }
 
-  /** 打乱 / 恢复顺序：换 seed 并清缓存重载第 1 页 */
+  /** 打乱 / 恢复顺序：换 seed 并清缓存重载第 1 页（作用于当前标签筛选后的集合） */
   function toggleShuffle() {
     const seed = shuffleSeed ? null : String(Date.now())
     setShuffleSeed(seed)
     cache.current.clear()
     setPage(1)
-    loadPage(1, pageSize, { prefetch: true, seed })
+    loadPage(1, pageSize, { prefetch: true, seed, tagIds: filterTagIds })
+  }
+
+  /** 标签筛选变更：更新状态并清缓存重载第 1 页（打乱状态保持，重新作用于新集合） */
+  function changeTagFilter(next: number[]) {
+    setFilterTagIds(next)
+    cache.current.clear()
+    setPage(1)
+    loadPage(1, pageSize, { prefetch: true, seed: shuffleSeed, tagIds: next })
+  }
+
+  function toggleTagFilter(id: number) {
+    if (filterTagIds.includes(id)) {
+      changeTagFilter(filterTagIds.filter((x) => x !== id))
+    } else {
+      changeTagFilter([...filterTagIds, id])
+    }
+  }
+
+  /** 标签管理弹窗变更后：刷新标签列表、剔除已删除标签的筛选、重载数据 */
+  async function handleTagsChanged() {
+    let fresh: Tag[] = []
+    try {
+      fresh = await tagApi.list(bookId)
+      setTags(fresh)
+    } catch {
+      // 标签刷新失败不阻塞列表重载
+    }
+    const valid = new Set(fresh.map((t) => t.id))
+    const next = filterTagIds.filter((id) => valid.has(id))
+    if (next.length !== filterTagIds.length) {
+      setFilterTagIds(next)
+      cache.current.clear()
+      setPage(1)
+      loadPage(1, pageSize, { prefetch: true, seed: shuffleSeed, tagIds: next })
+    } else {
+      cache.current.clear()
+      loadPage(page, pageSize, { prefetch: true })
+    }
+    // 列表行内标签 chips 与词数变化：强制列表模式重新查询
+    setListRefresh((k) => k + 1)
   }
 
   // 首次加载第 1 页（含预取）
@@ -181,6 +270,12 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
       setBook(b)
     } catch {
       // 书信息刷新失败不影响单词列表
+    }
+    // 标签词数可能变化
+    try {
+      setTags(await tagApi.list(bookId))
+    } catch {
+      // 标签刷新失败不影响主流程
     }
   }
 
@@ -247,6 +342,21 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                   </button>
                 ))}
               </div>
+              {/* 标签筛选（两种模式共用；纸质书模式下打乱作用于筛选后的集合） */}
+              <div className="shrink-0">
+                <button
+                  onClick={() => setTagFilterOpen((o) => !o)}
+                  aria-pressed={filterTagIds.length > 0}
+                  className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap ${
+                    filterTagIds.length > 0
+                      ? 'bg-charcoal text-ivory shadow-md'
+                      : 'text-charcoal/70 hover:text-charcoal'
+                  }`}
+                >
+                  <TagIcon className="w-4 h-4" />
+                  {filterTagIds.length > 0 ? `标签(${filterTagIds.length})` : '标签'}
+                </button>
+              </div>
               {/* 显示设置（仅纸质书模式，位置在模式切换旁） */}
               {mode === 'paper' && (
                 <button
@@ -285,6 +395,18 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                     释义
                   </button>
                 </div>
+                {/* 标记：点击词块快速增删标签 */}
+                <button
+                  aria-pressed={markMode}
+                  onClick={() => setMarkMode((v) => !v)}
+                  className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap shrink-0 ${
+                    markMode
+                      ? 'bg-charcoal text-ivory shadow-md'
+                      : 'text-charcoal/70 hover:text-charcoal'
+                  }`}
+                >
+                  标记
+                </button>
                 {/* 打乱：随机顺序浏览（确定性 seed，翻页稳定） */}
                 <button
                   aria-pressed={shuffleSeed !== null}
@@ -318,6 +440,55 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
               onClose={() => setSettingsOpen(false)}
             />
           )}
+          {/* 标签筛选面板：渲染在滚动容器外（overflow 会裁剪绝对定位），右上角对齐胶囊 */}
+          {tagFilterOpen && (
+            <div className="absolute right-0 top-12 z-50 w-72 max-h-96 overflow-y-auto bg-white rounded-2xl border border-charcoal/10 shadow-xl shadow-charcoal/10 p-4 animate-fade-in-up">
+              <div className="flex items-center justify-between">
+                <p className="font-serif text-base text-charcoal">按标签筛选</p>
+                <button
+                  onClick={() => setTagFilterOpen(false)}
+                  className="w-7 h-7 rounded-full text-charcoal/40 hover:bg-sand/40 hover:text-charcoal transition-colors"
+                  aria-label="关闭筛选"
+                >
+                  ✕
+                </button>
+              </div>
+              <div className="mt-3 space-y-1">
+                <button
+                  onClick={() => changeTagFilter([])}
+                  aria-pressed={filterTagIds.length === 0}
+                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm transition-colors ${
+                    filterTagIds.length === 0
+                      ? 'bg-charcoal text-ivory'
+                      : 'text-charcoal/70 hover:bg-sand/40'
+                  }`}
+                >
+                  <span>全部单词</span>
+                </button>
+                {tags.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => toggleTagFilter(t.id)}
+                    aria-pressed={filterTagIds.includes(t.id)}
+                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm transition-colors ${
+                      filterTagIds.includes(t.id)
+                        ? 'bg-charcoal text-ivory'
+                        : 'text-charcoal/70 hover:bg-sand/40'
+                    }`}
+                  >
+                    <span className="truncate">{t.name}</span>
+                    <span
+                      className={`tabular-nums text-xs ${
+                        filterTagIds.includes(t.id) ? 'text-ivory/60' : 'text-charcoal/40'
+                      }`}
+                    >
+                      {t.word_count}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           </div>
         </div>
       </nav>
@@ -338,6 +509,10 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
               coverDef={coverDef}
               prevPage={neighbor.prev}
               nextPage={neighbor.next}
+              markMode={markMode}
+              tags={tags}
+              onTagsUpdated={onMutated}
+              onTagsCreated={(tag) => setTags((prev) => [...prev, tag])}
             />
           </div>
         ) : (
@@ -348,6 +523,10 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
               onEdit={handleOpenEdit}
               onDelete={handleDelete}
               onMutated={onMutated}
+              tags={tags}
+              tagIds={filterTagIds}
+              onManageTags={() => setManageTagsOpen(true)}
+              onTagsCreated={(tag) => setTags((prev) => [...prev, tag])}
             />
           </div>
         )}
@@ -362,6 +541,17 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
             setFormOpen(false)
             await onMutated()
           }}
+          tags={tags}
+          onTagsCreated={(tag) => setTags((prev) => [...prev, tag])}
+        />
+      )}
+
+      {manageTagsOpen && (
+        <TagManageModal
+          bookId={bookId}
+          tags={tags}
+          onClose={() => setManageTagsOpen(false)}
+          onChanged={handleTagsChanged}
         />
       )}
     </div>

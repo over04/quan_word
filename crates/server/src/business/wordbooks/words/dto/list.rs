@@ -7,4 +7,6 @@ pub struct ListWordsQuery {
     pub page_size: Option<String>,
     pub order: Option<String>,
     pub seed: Option<String>,
+    /// 标签筛选（逗号分隔的标签 id，多选交集）
+    pub tag: Option<String>,
 }

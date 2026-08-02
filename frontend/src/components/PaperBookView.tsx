@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Page, Word } from '../api'
+import { words, type Page, type Tag, type Word } from '../api'
 import { BookIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from './Icons'
+import TagQuickModal from './TagQuickModal'
 
 interface Props {
   data: Page<Word> | null
@@ -16,6 +17,14 @@ interface Props {
   /** 相邻页数据（预取缓存），滑动翻页过程中可见 */
   prevPage: Page<Word> | null
   nextPage: Page<Word> | null
+  /** 标记模式：点击词块弹标签快速编辑（不遮挡） */
+  markMode: boolean
+  /** 该书全部标签（词块 chips 与快速弹窗用） */
+  tags: Tag[]
+  /** 单词标签集变更成功后回调（父级刷新数据） */
+  onTagsUpdated: () => void
+  /** 新建标签成功后回调（父级刷新标签列表） */
+  onTagsCreated: (tag: Tag) => void
 }
 
 /** 按字号数字计算各元素尺寸：字号 px → 各元素样式 */
@@ -64,6 +73,12 @@ interface SheetProps {
   onToggleDef: (id: number) => void
   /** 单词行进入动画：仅首次加载播放 */
   wordsAnim: boolean
+  /** 标记模式：词块点击弹标签编辑 */
+  markMode: boolean
+  /** 标签 id → 名称（chips 显示） */
+  tagName: Map<number, string>
+  onOpenQuick: (w: Word) => void
+  onRemoveTag: (w: Word, tagId: number) => void
 }
 
 /** 一张纸：页眉 + 横线单词网格 + 页脚；数据未就绪时渲染空白纸 */
@@ -77,6 +92,10 @@ function Sheet({
   onToggleWord,
   onToggleDef,
   wordsAnim,
+  markMode,
+  tagName,
+  onOpenQuick,
+  onRemoveTag,
 }: SheetProps) {
   const f = fontStyles(fontScale)
   const words = d?.items ?? []
@@ -94,31 +113,35 @@ function Sheet({
       {/* 多列单词：一行横线上多个单词，单词在线上方、释义在线下方 */}
       <div className="relative grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 flex-1 content-start px-9 md:px-11">
         {words.map((w, i) => {
-          const h = hidden[w.id] ?? { word: false, def: false }
+          const h = hidden[w.id]
+          // 手动点击优先；未手动设置过的词跟随全局开关（隐藏/显示）
+          const wordHidden = h ? h.word : coverWord
+          const defHidden = h ? h.def : coverDef
           const full = formatDefinitions(w)
           return (
             <div
               key={w.id}
               className={`group/cell px-2 md:px-3 hover:bg-sand/15 transition-colors ${wordsAnim ? 'animate-word-rise' : ''}`}
               style={wordsAnim ? { animationDelay: `${Math.min(i, 8) * 40}ms` } : undefined}
+              onClick={markMode ? () => onOpenQuick(w) : undefined}
             >
-              {/* 单词（横线上方，底部贴线）+ 音标：一键模糊时单词与音标一起晕开 */}
+              {/* 单词（横线上方，底部贴线）+ 音标：单词隐藏时一起晕开 */}
               <div className="flex items-end gap-2 min-w-0" style={{ height: f.rowH }}>
                 <button
-                  onClick={() => onToggleWord(w.id)}
-                  aria-pressed={h.word}
-                  title={h.word ? '点击显示单词' : '点击遮挡单词，回忆拼写'}
+                  onClick={markMode ? () => onOpenQuick(w) : () => onToggleWord(w.id)}
+                  aria-pressed={markMode ? undefined : wordHidden}
+                  title={markMode ? '编辑标签' : wordHidden ? '点击显示单词' : '点击遮挡单词，回忆拼写'}
                   style={f.word}
                   className="font-serif text-charcoal tracking-wide leading-none pb-[3px] truncate rounded -mx-1 px-1 transition-colors duration-150 hover:bg-sand/50 focus-visible:outline-2 focus-visible:outline-clay focus-visible:outline-offset-4"
                 >
-                  {h.word || coverWord ? <Covered text={w.spelling} /> : w.spelling}
+                  {wordHidden ? <Covered text={w.spelling} /> : w.spelling}
                 </button>
                 {w.phonetic && (
                   <span
                     style={f.phonetic}
                     className="shrink-0 text-charcoal/40 tracking-wide leading-none pb-[4px] truncate"
                   >
-                    {coverWord ? <Covered text={w.phonetic} /> : w.phonetic}
+                    {wordHidden ? <Covered text={w.phonetic} /> : w.phonetic}
                   </span>
                 )}
               </div>
@@ -130,13 +153,43 @@ function Sheet({
               {/* 释义（横线下方）：可换行显示，最多 3 行，不再压缩成一行 */}
               <div className="pt-[3px] pb-1 min-w-0" style={{ minHeight: f.defMinH }}>
                 <button
-                  onClick={() => onToggleDef(w.id)}
-                  aria-pressed={h.def}
-                  title={h.def ? '点击显示释义' : full}
+                  onClick={markMode ? () => onOpenQuick(w) : () => onToggleDef(w.id)}
+                  aria-pressed={markMode ? undefined : defHidden}
+                  title={markMode ? '编辑标签' : defHidden ? '点击显示释义' : full}
                   style={f.def}
                   className="w-full text-charcoal/60 leading-snug line-clamp-3 text-left rounded -mx-1 px-1 transition-colors duration-150 hover:bg-sand/50 focus-visible:outline-2 focus-visible:outline-clay focus-visible:outline-offset-4"
                 >
-                  {h.def || coverDef ? <Covered text={full} /> : full}
+                  {defHidden ? <Covered text={full} /> : full}
+                </button>
+              </div>
+              {/* 标签行：已有标签 chips（点击移除）+ 添加按钮 */}
+              <div className="mt-1 flex items-center gap-1 min-w-0">
+                <div className="flex items-center gap-1 min-w-0 overflow-hidden">
+                  {w.tags.map((tid) => (
+                    <button
+                      key={tid}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        onRemoveTag(w, tid)
+                      }}
+                      title={`移除标签「${tagName.get(tid) ?? tid}」`}
+                      className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-sage/50 text-charcoal/70 text-[10px] font-medium hover:bg-sage/80 hover:text-charcoal transition-colors"
+                    >
+                      {tagName.get(tid) ?? tid}
+                      <span className="text-charcoal/40 group-hover/cell:text-charcoal/70">✕</span>
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onOpenQuick(w)
+                  }}
+                  title="添加标签"
+                  aria-label={`给 ${w.spelling} 添加标签`}
+                  className="shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-charcoal/25 hover:text-clay hover:bg-sand/50 transition-colors"
+                >
+                  <PlusIcon className="w-3 h-3" />
                 </button>
               </div>
             </div>
@@ -171,9 +224,17 @@ export default function PaperBookView({
   coverDef,
   prevPage,
   nextPage,
+  markMode,
+  tags: allTags,
+  onTagsUpdated,
+  onTagsCreated,
 }: Props) {
   // 遮挡状态：wordId → { word, def }，翻页即清空（翻开新一页）
   const [hidden, setHidden] = useState<Record<number, { word: boolean; def: boolean }>>({})
+  // 快速标签编辑：当前目标单词（null = 未打开）
+  const [quickWord, setQuickWord] = useState<Word | null>(null)
+  // 标签 id → 名称映射（词块 chips）
+  const tagName = new Map(allTags.map((t) => [t.id, t.name]))
   // 滑动翻页：offset 单位 = 页宽（0 = 当前页；-1 = 右侧相邻页可见；+1 = 左侧相邻页可见）
   const [offset, setOffset] = useState(0)
   const [sliding, setSliding] = useState(false)
@@ -326,11 +387,42 @@ export default function PaperBookView({
   }
 
   function toggleWord(id: number) {
-    setHidden((h) => ({ ...h, [id]: { word: !h[id]?.word, def: h[id]?.def ?? false } }))
+    setHidden((h) => {
+      const cur = h[id]
+      // 以实际显示状态（含全局开关）翻转：全局隐藏时可手动点亮，全局显示时可手动遮住
+      const wordHidden = cur ? cur.word : coverWord
+      return { ...h, [id]: { ...cur, word: !wordHidden } }
+    })
   }
 
   function toggleDef(id: number) {
-    setHidden((h) => ({ ...h, [id]: { word: h[id]?.word ?? false, def: !h[id]?.def } }))
+    setHidden((h) => {
+      const cur = h[id]
+      const defHidden = cur ? cur.def : coverDef
+      return { ...h, [id]: { ...cur, def: !defHidden } }
+    })
+  }
+
+  /** 打开单词快速标签编辑 */
+  function openQuick(w: Word) {
+    setQuickWord(w)
+  }
+
+  /** 词块 chips 移除单个标签：全量替换该词标签集 */
+  async function removeTag(w: Word, tagId: number) {
+    const next = w.tags.filter((id) => id !== tagId)
+    try {
+      await words.updateTags(w.wordbook_id, w.id, next)
+      handleTagsUpdated()
+    } catch (e) {
+      window.alert(e instanceof Error ? e.message : '保存失败')
+    }
+  }
+
+  /** 标签变更后：抑制词行重播动画，再通知父级刷新 */
+  function handleTagsUpdated() {
+    setWordsAnim(false)
+    onTagsUpdated()
   }
 
   if (!data) return <p className="text-center text-charcoal/40 py-24 animate-pulse">加载中…</p>
@@ -413,6 +505,10 @@ export default function PaperBookView({
                   onToggleWord={toggleWord}
                   onToggleDef={toggleDef}
                   wordsAnim={wordsAnim}
+                  markMode={markMode}
+                  tagName={tagName}
+                  onOpenQuick={openQuick}
+                  onRemoveTag={removeTag}
                 />
                 <Sheet
                   d={triple.mid.d}
@@ -424,6 +520,10 @@ export default function PaperBookView({
                   onToggleWord={toggleWord}
                   onToggleDef={toggleDef}
                   wordsAnim={wordsAnim}
+                  markMode={markMode}
+                  tagName={tagName}
+                  onOpenQuick={openQuick}
+                  onRemoveTag={removeTag}
                 />
                 <Sheet
                   d={triple.right.d}
@@ -435,12 +535,27 @@ export default function PaperBookView({
                   onToggleWord={toggleWord}
                   onToggleDef={toggleDef}
                   wordsAnim={wordsAnim}
+                  markMode={markMode}
+                  tagName={tagName}
+                  onOpenQuick={openQuick}
+                  onRemoveTag={removeTag}
                 />
               </>
             )}
           </div>
         </div>
       </div>
+
+      {quickWord && (
+        <TagQuickModal
+          bookId={quickWord.wordbook_id}
+          word={quickWord}
+          tags={allTags}
+          onClose={() => setQuickWord(null)}
+          onChanged={handleTagsUpdated}
+          onTagsCreated={onTagsCreated}
+        />
+      )}
     </div>
   )
 }

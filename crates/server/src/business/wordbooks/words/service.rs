@@ -6,10 +6,13 @@ use entity::word;
 use sea_orm::{DatabaseConnection, Set};
 
 use super::dto::batch::BatchDeleteWordsResp;
+use super::dto::batch_tag::BatchTagWordsReq;
+use super::dto::batch_tag::BatchTagWordsResp;
 use super::dto::create::CreateWordReq;
 use super::dto::import::ImportResp;
 use super::dto::resp::WordResp;
 use super::dto::update::UpdateWordReq;
+use super::dto::update_tags::UpdateWordTagsReq;
 use super::error::WordError;
 use super::import;
 use super::order::WordOrder;
@@ -29,6 +32,7 @@ impl WordService {
         page: u64,
         page_size: u64,
         order: &WordOrder,
+        tag_ids: &[i32],
     ) -> Result<PageResp<WordResp>, WordError> {
         let db = state.db.as_ref();
         Self::ensure_book_exists(db, book_id).await?;
@@ -42,9 +46,10 @@ impl WordService {
                     SortDir::Asc,
                     page,
                     page_size,
+                    tag_ids,
                 )
                 .await?;
-                Self::to_page(models, total, page, page_size)
+                Self::to_page_with_tags(db, models, total, page, page_size).await
             }
             WordOrder::IdDesc => {
                 let (models, total) = WordRepo::browse_page(
@@ -54,9 +59,10 @@ impl WordService {
                     SortDir::Desc,
                     page,
                     page_size,
+                    tag_ids,
                 )
                 .await?;
-                Self::to_page(models, total, page, page_size)
+                Self::to_page_with_tags(db, models, total, page, page_size).await
             }
             WordOrder::Spelling => {
                 let (models, total) = WordRepo::browse_page(
@@ -66,20 +72,21 @@ impl WordService {
                     SortDir::Asc,
                     page,
                     page_size,
+                    tag_ids,
                 )
                 .await?;
-                Self::to_page(models, total, page, page_size)
+                Self::to_page_with_tags(db, models, total, page, page_size).await
             }
             // 打乱：全量 id 按 seed 确定性洗牌（跨库一致），按页取 id 切片后查单词
             WordOrder::Random(seed) => {
-                // 洗牌序列缓存：(book_id, seed) → 完整 id 序列，避免每页请求重复全量洗牌
+                // 洗牌序列缓存：(book_id, 筛选标签 ids, seed) → 完整 id 序列，避免每页请求重复全量洗牌
                 // 注意：锁 guard 立即 drop，禁止跨 await 持有（parking_lot guard 非 Send）
-                let key = (book_id, seed.clone());
+                let key = (book_id, tag_ids.to_vec(), seed.clone());
                 let cached = state.shuffle_cache.lock().get(&key).cloned();
                 let ordered = match cached {
                     Some(v) => v,
                     None => {
-                        let mut ordered = WordRepo::find_all_ids(db, book_id).await?;
+                        let mut ordered = WordRepo::find_all_ids(db, book_id, tag_ids).await?;
                         Self::seeded_shuffle(&mut ordered, seed);
                         let mut m = state.shuffle_cache.lock();
                         if m.len() >= SHUFFLE_CACHE_CAP {
@@ -108,12 +115,13 @@ impl WordService {
                     .iter()
                     .filter_map(|id| by_id.get(id).cloned())
                     .collect();
-                Self::to_page(ordered_models, total, page, page_size)
+                Self::to_page_with_tags(db, ordered_models, total, page, page_size).await
             }
         }
     }
 
-    /// 列表模式查询：书内搜索（拼写/释义模糊匹配）+ 白名单排序 + 分页。
+    /// 列表模式查询：书内搜索（拼写/释义模糊匹配）+ 白名单排序 + 标签交集筛选 + 分页。
+    #[allow(clippy::too_many_arguments)]
     pub async fn query(
         state: &AppState,
         book_id: i32,
@@ -122,13 +130,14 @@ impl WordService {
         dir: SortDir,
         page: u64,
         page_size: u64,
+        tag_ids: &[i32],
     ) -> Result<PageResp<WordResp>, WordError> {
         let db = state.db.as_ref();
         Self::ensure_book_exists(db, book_id).await?;
         let q = q.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let (models, total) =
-            WordRepo::search_page(db, book_id, q, field, dir, page, page_size).await?;
-        Self::to_page(models, total, page, page_size)
+            WordRepo::search_page(db, book_id, q, field, dir, page, page_size, tag_ids).await?;
+        Self::to_page_with_tags(db, models, total, page, page_size).await
     }
 
     pub async fn create(
@@ -139,8 +148,9 @@ impl WordService {
         Self::validate(&req.spelling, &req.definitions)?;
         let db = state.db.as_ref();
         Self::ensure_book_exists(db, book_id).await?;
+        let tag_ids = Self::validated_tag_ids(db, book_id, &req.tags).await?;
         let now = Utc::now();
-        let model = WordRepo::insert(
+        let (model, tag_ids) = WordRepo::insert_with_tags(
             db,
             word::ActiveModel {
                 wordbook_id: Set(book_id),
@@ -152,12 +162,13 @@ impl WordService {
                 updated_at: Set(now),
                 ..Default::default()
             },
+            &tag_ids,
         )
         .await?;
         // 新词影响列表页 word_count 与洗牌 id 集合：两个缓存都失效
         state.invalidate_wordbooks();
         state.shuffle_cache.lock().clear();
-        Self::to_resp(&model)
+        Self::to_resp(&model, &tag_ids)
     }
 
     pub async fn update(
@@ -177,14 +188,17 @@ impl WordService {
                 wordbook_id: book_id,
             });
         }
+        let tag_ids = Self::validated_tag_ids(db, book_id, &req.tags).await?;
         let mut model: word::ActiveModel = w.into();
         model.spelling = Set(req.spelling);
         model.phonetic = Set(req.phonetic);
         model.definitions = Set(serde_json::to_value(&req.definitions)?);
         model.example = Set(req.example);
         model.updated_at = Set(Utc::now());
-        let saved = WordRepo::update(db, model).await?;
-        Self::to_resp(&saved)
+        let (saved, tag_ids) = WordRepo::update_with_tags(db, model, &tag_ids).await?;
+        // 标签变化影响筛选与打乱结果集合：洗牌缓存失效
+        state.shuffle_cache.lock().clear();
+        Self::to_resp(&saved, &tag_ids)
     }
 
     pub async fn delete(state: &AppState, book_id: i32, id: i32) -> Result<(), WordError> {
@@ -263,6 +277,79 @@ impl WordService {
         state.invalidate_wordbooks();
         state.shuffle_cache.lock().clear();
         Ok(BatchDeleteWordsResp { deleted })
+    }
+
+    /// 替换单词标签集（全量）：校验归属后重建关联；返回更新后的单词。
+    pub async fn update_tags(
+        state: &AppState,
+        book_id: i32,
+        id: i32,
+        req: UpdateWordTagsReq,
+    ) -> Result<WordResp, WordError> {
+        let db = state.db.as_ref();
+        let w = WordRepo::find_by_id(db, id)
+            .await?
+            .ok_or(WordError::WordNotFound { word_id: id })?;
+        if w.wordbook_id != book_id {
+            return Err(WordError::WordNotInWordbook {
+                word_id: id,
+                wordbook_id: book_id,
+            });
+        }
+        let tag_ids = Self::validated_tag_ids(db, book_id, &req.tags).await?;
+        let mut model: word::ActiveModel = w.into();
+        model.updated_at = Set(Utc::now());
+        let (saved, tag_ids) = WordRepo::update_with_tags(db, model, &tag_ids).await?;
+        // 标签关系变化影响筛选后的打乱结果集合：洗牌缓存失效（词数不变，无需刷新 wordbooks 缓存）
+        state.shuffle_cache.lock().clear();
+        Self::to_resp(&saved, &tag_ids)
+    }
+
+    /// 批量给单词打标签（只添加，不清除已有标签）；返回实际新增关联数。
+    pub async fn batch_tag(
+        state: &AppState,
+        book_id: i32,
+        req: BatchTagWordsReq,
+    ) -> Result<BatchTagWordsResp, WordError> {
+        if req.word_ids.is_empty() {
+            return Err(WordError::EmptySelection);
+        }
+        if req.tag_ids.is_empty() {
+            return Err(WordError::EmptyTagSelection);
+        }
+        let db = state.db.as_ref();
+        Self::ensure_book_exists(db, book_id).await?;
+        let tag_ids = Self::validated_tag_ids(db, book_id, &req.tag_ids).await?;
+        let tagged = WordRepo::batch_tag(db, book_id, &req.word_ids, &tag_ids).await?;
+        // 标签关系变化影响筛选后的打乱结果集合：洗牌缓存失效（词数不变，无需刷新 wordbooks 缓存）
+        state.shuffle_cache.lock().clear();
+        Ok(BatchTagWordsResp { tagged })
+    }
+
+    /// 解析 `tag` 查询参数（逗号分隔的标签 id）：排序去重；非法输入报错。
+    pub(crate) fn parse_tag_ids(raw: Option<&str>) -> Result<Vec<i32>, WordError> {
+        let Some(s) = raw else {
+            return Ok(Vec::new());
+        };
+        if s.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut ids = Vec::new();
+        for part in s.split(',') {
+            let t = part.trim();
+            if t.is_empty() {
+                continue;
+            }
+            match t.parse::<i32>() {
+                Ok(id) => ids.push(id),
+                Err(_) => {
+                    return Err(WordError::InvalidTagIds { tag: s.to_string() });
+                }
+            }
+        }
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(ids)
     }
 
     /// csv 模板：表头行，UTF-8 带 BOM（Excel/WPS 直接打开不乱码）。
@@ -351,7 +438,7 @@ impl WordService {
         Self::ensure_book_exists(state.db.as_ref(), book_id).await
     }
 
-    fn to_resp(model: &word::Model) -> Result<WordResp, WordError> {
+    fn to_resp(model: &word::Model, tags: &[i32]) -> Result<WordResp, WordError> {
         let definitions: Vec<Definition> = serde_json::from_value(model.definitions.clone())?;
         Ok(WordResp {
             id: model.id,
@@ -360,6 +447,7 @@ impl WordService {
             phonetic: model.phonetic.clone(),
             definitions,
             example: model.example.clone(),
+            tags: tags.to_vec(),
             created_at: model.created_at.to_rfc3339(),
             updated_at: model.updated_at.to_rfc3339(),
         })
@@ -367,13 +455,14 @@ impl WordService {
 
     fn to_page(
         models: Vec<word::Model>,
+        tags_by_id: &HashMap<i32, Vec<i32>>,
         total: u64,
         page: u64,
         page_size: u64,
     ) -> Result<PageResp<WordResp>, WordError> {
         let items = models
             .iter()
-            .map(Self::to_resp)
+            .map(|m| Self::to_resp(m, tags_by_id.get(&m.id).map_or(&[], |v| v)))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(PageResp {
             items,
@@ -382,6 +471,46 @@ impl WordService {
             page_size,
             total_pages: total.div_ceil(page_size),
         })
+    }
+
+    /// 查询结果的标签数据加载 + 组装分页（一次查全部 id 的标签，避免 N+1）。
+    async fn to_page_with_tags(
+        db: &DatabaseConnection,
+        models: Vec<word::Model>,
+        total: u64,
+        page: u64,
+        page_size: u64,
+    ) -> Result<PageResp<WordResp>, WordError> {
+        let ids: Vec<i32> = models.iter().map(|m| m.id).collect();
+        let tags_by_id = WordRepo::find_tag_ids_by_word_ids(db, &ids).await?;
+        Self::to_page(models, &tags_by_id, total, page, page_size)
+    }
+
+    /// 校验标签 id 集合全部属于该书；返回去重升序后的 id（空集直接通过）。
+    async fn validated_tag_ids(
+        db: &DatabaseConnection,
+        book_id: i32,
+        ids: &[i32],
+    ) -> Result<Vec<i32>, WordError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut unique = ids.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+        let found = WordRepo::find_tag_ids_by_book(db, book_id, &unique).await?;
+        if found.len() != unique.len() {
+            let missing = unique
+                .iter()
+                .find(|id| !found.contains(id))
+                .copied()
+                .unwrap_or(0);
+            return Err(WordError::TagNotInWordbook {
+                tag_id: missing,
+                wordbook_id: book_id,
+            });
+        }
+        Ok(found)
     }
 
     /// 创建/更新前的字段校验：拼写、释义数量与词性白名单。
@@ -511,5 +640,39 @@ mod tests {
         WordService::seeded_shuffle(&mut a, "seed-1");
         WordService::seeded_shuffle(&mut b, "seed-2");
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn parse_tag_ids_dedups_and_sorts() {
+        assert_eq!(
+            WordService::parse_tag_ids(Some("3,1,2,2,1")).unwrap(),
+            vec![1, 2, 3]
+        );
+        assert_eq!(
+            WordService::parse_tag_ids(Some("1,,2")).unwrap(),
+            vec![1, 2]
+        );
+        assert_eq!(WordService::parse_tag_ids(Some(" 1 ")).unwrap(), vec![1]);
+    }
+
+    #[test]
+    fn parse_tag_ids_handles_empty() {
+        assert_eq!(WordService::parse_tag_ids(None).unwrap(), Vec::<i32>::new());
+        assert_eq!(
+            WordService::parse_tag_ids(Some("")).unwrap(),
+            Vec::<i32>::new()
+        );
+        assert_eq!(
+            WordService::parse_tag_ids(Some(" , ")).unwrap(),
+            Vec::<i32>::new()
+        );
+    }
+
+    #[test]
+    fn parse_tag_ids_rejects_non_numeric() {
+        assert!(matches!(
+            WordService::parse_tag_ids(Some("1,abc")),
+            Err(WordError::InvalidTagIds { tag }) if tag == "1,abc"
+        ));
     }
 }

@@ -149,6 +149,15 @@ export function CheckIcon({ className }: IconProps) {
   )
 }
 
+export function TagIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M12 2H2v10l9.29 9.29a1 1 0 0 0 1.42 0l8.58-8.58a1 1 0 0 0 0-1.42z" />
+      <circle cx="7" cy="7" r="1.5" />
+    </svg>
+  )
+}
+
 export function UploadIcon({ className }: IconProps) {
   return (
     <svg {...base(className)}>

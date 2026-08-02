@@ -1,11 +1,13 @@
-import { useEffect, useState } from 'react'
-import { words, type Page, type Word } from '../api'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { words, type Page, type Tag, type Word } from '../api'
 import ImportModal from './ImportModal'
 import Pagination from './Pagination'
+import TagPickerModal from './TagPickerModal'
 import {
   ArrowsUpDownIcon,
   PencilIcon,
   SearchIcon,
+  TagIcon,
   TrashIcon,
   UploadIcon,
 } from './Icons'
@@ -18,6 +20,14 @@ interface Props {
   onDelete: (w: Word) => void
   /** 导入/批量删除等内部变更后通知父级（刷新书信息与缓存） */
   onMutated: () => void
+  /** 该书全部标签（行内展示与批量打标签用） */
+  tags: Tag[]
+  /** 当前标签筛选（多选交集） */
+  tagIds: number[]
+  /** 打开标签管理弹窗 */
+  onManageTags: () => void
+  /** 新建标签成功后回调（父级刷新标签列表） */
+  onTagsCreated: (tag: Tag) => void
 }
 
 const PAGE_SIZE = 20
@@ -37,8 +47,18 @@ function formatDate(iso: string): string {
   return Number.isNaN(d.getTime()) ? '—' : d.toLocaleDateString('zh-CN')
 }
 
-/** 列表模式：书内搜索 + 排序 + 分页 + 批量管理（自包含数据加载） */
-export default function WordTable({ bookId, refreshKey, onEdit, onDelete, onMutated }: Props) {
+/** 列表模式：书内搜索 + 排序 + 标签筛选 + 分页 + 批量管理（自包含数据加载） */
+export default function WordTable({
+  bookId,
+  refreshKey,
+  onEdit,
+  onDelete,
+  onMutated,
+  tags,
+  tagIds,
+  onManageTags,
+  onTagsCreated,
+}: Props) {
   const [q, setQ] = useState('')
   const [debouncedQ, setDebouncedQ] = useState('')
   const [sort, setSort] = useState('created_at')
@@ -46,9 +66,17 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete, onMuta
   const [page, setPage] = useState(1)
   const [data, setData] = useState<Page<Word> | null>(null)
   const [error, setError] = useState('')
+  // 数据版本：查询结果到达时递增，驱动数据容器重挂播放淡入动画
+  const [dataVersion, setDataVersion] = useState(0)
   // 批量选择：Set 跨页累计保留；删除/导入成功后清空
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [importOpen, setImportOpen] = useState(false)
+  // 批量打标签弹窗
+  const [tagPickerOpen, setTagPickerOpen] = useState(false)
+  // 上次筛选（引用比较）：变化时重置页码且不发起旧页请求
+  const prevTagRef = useRef(tagIds)
+  // 标签 id → 名称映射（行内 chips）
+  const tagName = useMemo(() => new Map(tags.map((t) => [t.id, t.name])), [tags])
 
   // 搜索防抖：停止输入 400ms 后生效
   useEffect(() => {
@@ -56,17 +84,30 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete, onMuta
     return () => window.clearTimeout(t)
   }, [q])
 
-  // 查询加载：搜索词 / 排序 / 页码 / 数据变更时重新请求
+  // 查询加载：搜索词 / 排序 / 页码 / 标签筛选 / 数据变更时重新请求
   useEffect(() => {
+    if (prevTagRef.current !== tagIds) {
+      prevTagRef.current = tagIds
+      if (page !== 1) {
+        // 筛选变化：回到第 1 页，等待重渲染后以新筛选查询
+        setPage(1)
+        return
+      }
+      // 已在第 1 页：setPage(1) 不会触发重渲染，直接以新筛选查询
+    }
     let alive = true
     words
       .query(bookId, page, PAGE_SIZE, {
         q: debouncedQ || undefined,
         sort,
         order,
+        tag: tagIds.length > 0 ? tagIds.join(',') : undefined,
       })
       .then((r) => {
-        if (alive) setData(r)
+        if (alive) {
+          setData(r)
+          setDataVersion((v) => v + 1)
+        }
       })
       .catch((e) => {
         if (alive) setError(e instanceof Error ? e.message : '加载失败')
@@ -74,7 +115,7 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete, onMuta
     return () => {
       alive = false
     }
-  }, [bookId, debouncedQ, sort, order, page, refreshKey])
+  }, [bookId, debouncedQ, sort, order, page, refreshKey, tagIds])
 
   // 删除后当前页可能空：回退上一页
   useEffect(() => {
@@ -173,6 +214,13 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete, onMuta
             <UploadIcon className="w-3.5 h-3.5" />
             导入
           </button>
+          <button
+            onClick={onManageTags}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full border border-charcoal/15 text-sm font-medium text-charcoal/70 hover:text-charcoal hover:border-charcoal/30 transition-all whitespace-nowrap"
+          >
+            <TagIcon className="w-3.5 h-3.5" />
+            标签管理
+          </button>
         </div>
       </div>
 
@@ -189,12 +237,22 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete, onMuta
             <TrashIcon className="w-3.5 h-3.5" />
             删除所选
           </button>
+          <button
+            onClick={() => setTagPickerOpen(true)}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full border border-charcoal/10 text-charcoal/60 text-xs font-medium hover:border-clay hover:text-clay transition-colors whitespace-nowrap"
+          >
+            <TagIcon className="w-3.5 h-3.5" />
+            打标签
+          </button>
         </div>
       )}
 
       {error && <p className="text-red-600 text-center mb-4">{error}</p>}
 
-      <div className="bg-white rounded-2xl shadow-sm border border-charcoal/5 overflow-hidden">
+      <div
+        key={dataVersion}
+        className="bg-white rounded-2xl shadow-sm border border-charcoal/5 overflow-hidden animate-fade-in-up"
+      >
         {!data ? (
           <p className="text-center text-charcoal/40 py-24 animate-pulse">加载中…</p>
         ) : data.items.length === 0 ? (
@@ -219,6 +277,7 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete, onMuta
                   <th className="px-5 py-5">单词</th>
                   <th className="px-5 py-5">音标</th>
                   <th className="px-5 py-5">释义</th>
+                  <th className="px-5 py-5">标签</th>
                   <th className="px-5 py-5 w-28">添加时间</th>
                   <th className="px-5 py-5 text-right w-44">操作</th>
                 </tr>
@@ -256,6 +315,20 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete, onMuta
                           {di < w.definitions.length - 1 && '；'}
                         </span>
                       ))}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      {w.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {w.tags.map((id) => (
+                            <span
+                              key={id}
+                              className="inline-block px-1.5 py-0.5 rounded bg-sage/50 text-charcoal/70 text-[11px] font-medium"
+                            >
+                              {tagName.get(id) ?? id}
+                            </span>
+                          ))}
+                        </div>
+                      )}
                     </td>
                     <td className="px-5 py-3.5 text-xs text-charcoal/45 whitespace-nowrap tabular-nums">
                       {formatDate(w.created_at)}
@@ -311,6 +384,18 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete, onMuta
                     </span>
                   </div>
                   <p className="mt-1.5 ml-9 text-sm text-charcoal/70 leading-relaxed">{summary(w)}</p>
+                  {w.tags.length > 0 && (
+                    <div className="mt-2 ml-9 flex flex-wrap gap-1">
+                      {w.tags.map((id) => (
+                        <span
+                          key={id}
+                          className="inline-block px-1.5 py-0.5 rounded bg-sage/50 text-charcoal/70 text-[11px] font-medium"
+                        >
+                          {tagName.get(id) ?? id}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <div className="mt-3 ml-9 flex gap-2">
                     <button
                       onClick={(e) => {
@@ -341,6 +426,24 @@ export default function WordTable({ bookId, refreshKey, onEdit, onDelete, onMuta
       </div>
       {data && data.total_pages > 1 && (
         <Pagination page={page} totalPages={data.total_pages} onPrev={() => setPage((p) => p - 1)} onNext={() => setPage((p) => p + 1)} />
+      )}
+
+      {importOpen && (
+        <ImportModal bookId={bookId} onClose={() => setImportOpen(false)} onImported={onMutated} />
+      )}
+
+      {tagPickerOpen && (
+        <TagPickerModal
+          bookId={bookId}
+          wordIds={[...selected]}
+          tags={tags}
+          onClose={() => setTagPickerOpen(false)}
+          onApplied={async () => {
+            setTagPickerOpen(false)
+            await onMutated()
+          }}
+          onTagsCreated={onTagsCreated}
+        />
       )}
 
       {importOpen && (

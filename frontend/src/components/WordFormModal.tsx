@@ -1,6 +1,7 @@
 import { useState } from 'react'
-import { words, type Definition, type Word } from '../api'
+import { words, type Definition, type Tag, type Word } from '../api'
 import Modal from './Modal'
+import TagPicker from './TagPicker'
 import { PencilIcon, PlusIcon } from './Icons'
 
 interface Props {
@@ -8,6 +9,10 @@ interface Props {
   initial: Word | null
   onClose: () => void
   onSaved: () => void
+  /** 该书全部标签 */
+  tags: Tag[]
+  /** 新建标签成功后回调（父级刷新标签列表） */
+  onTagsCreated: (tag: Tag) => void
 }
 
 const inputClass =
@@ -30,13 +35,14 @@ const POS_OPTIONS = [
   'phr.',
 ]
 
-export default function WordFormModal({ bookId, initial, onClose, onSaved }: Props) {
+export default function WordFormModal({ bookId, initial, onClose, onSaved, tags, onTagsCreated }: Props) {
   const [spelling, setSpelling] = useState(initial?.spelling ?? '')
   const [phonetic, setPhonetic] = useState(initial?.phonetic ?? '')
   const [definitions, setDefinitions] = useState<Definition[]>(
     initial?.definitions ?? [{ pos: '', meaning: '' }],
   )
   const [example, setExample] = useState(initial?.example ?? '')
+  const [selectedTagIds, setSelectedTagIds] = useState<Set<number>>(new Set(initial?.tags ?? []))
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -62,6 +68,7 @@ export default function WordFormModal({ bookId, initial, onClose, onSaved }: Pro
         phonetic: phonetic.trim() || undefined,
         definitions: definitions.map((d) => ({ pos: d.pos.trim(), meaning: d.meaning.trim() })),
         example: example.trim() || undefined,
+        tags: [...selectedTagIds],
       }
       if (initial) {
         await words.update(bookId, initial.id, payload)
@@ -166,6 +173,27 @@ export default function WordFormModal({ bookId, initial, onClose, onSaved }: Pro
               rows={2}
               placeholder="Don't abandon hope."
               className={inputClass}
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-charcoal/60 mb-1.5">标签</label>
+            <TagPicker
+              bookId={bookId}
+              tags={tags}
+              selected={selectedTagIds}
+              onToggle={(id) =>
+                setSelectedTagIds((prev) => {
+                  const n = new Set(prev)
+                  if (n.has(id)) n.delete(id)
+                  else n.add(id)
+                  return n
+                })
+              }
+              onCreated={(tag) => {
+                onTagsCreated(tag)
+                setSelectedTagIds((prev) => new Set(prev).add(tag.id))
+              }}
             />
           </div>
         </div>

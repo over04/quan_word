@@ -7,6 +7,8 @@ use axum::{
 
 use super::dto::batch::BatchDeleteWordsReq;
 use super::dto::batch::BatchDeleteWordsResp;
+use super::dto::batch_tag::BatchTagWordsReq;
+use super::dto::batch_tag::BatchTagWordsResp;
 use super::dto::create::CreateWordReq;
 use super::dto::import::ImportResp;
 use super::dto::list::ListWordsQuery;
@@ -14,6 +16,7 @@ use super::dto::resp::WordResp;
 use super::dto::search::SearchWordsQuery;
 use super::dto::template::TemplateQuery;
 use super::dto::update::UpdateWordReq;
+use super::dto::update_tags::UpdateWordTagsReq;
 use super::error::WordError;
 use super::order::WordOrder;
 use super::service::WordService;
@@ -45,8 +48,16 @@ pub fn router() -> Router<AppState> {
             post(batch_delete_words),
         )
         .route(
+            "/api/wordbooks/{book_id}/words/batch-tag",
+            post(batch_tag_words),
+        )
+        .route(
             "/api/wordbooks/{book_id}/words/{id}",
             put(update_word).delete(delete_word),
+        )
+        .route(
+            "/api/wordbooks/{book_id}/words/{id}/tags",
+            put(update_word_tags),
         )
 }
 
@@ -57,8 +68,9 @@ pub async fn list_words(
 ) -> Result<Json<PageResp<WordResp>>, ApiError> {
     let (page, page_size) = parse_paging(query.page.as_deref(), query.page_size.as_deref())?;
     let order = WordOrder::parse(query.order.as_deref(), query.seed.as_deref())?;
+    let tag_ids = WordService::parse_tag_ids(query.tag.as_deref())?;
     Ok(Json(
-        WordService::list(&state, book_id, page, page_size, &order).await?,
+        WordService::list(&state, book_id, page, page_size, &order, &tag_ids).await?,
     ))
 }
 
@@ -71,8 +83,12 @@ pub async fn query_words(
     let (page, page_size) = parse_paging(query.page.as_deref(), query.page_size.as_deref())?;
     let field = SortField::parse(query.sort.as_deref().unwrap_or("created_at"))?;
     let dir = SortDir::parse(query.order.as_deref().unwrap_or("asc"))?;
+    let tag_ids = WordService::parse_tag_ids(query.tag.as_deref())?;
     Ok(Json(
-        WordService::query(&state, book_id, query.q, field, dir, page, page_size).await?,
+        WordService::query(
+            &state, book_id, query.q, field, dir, page, page_size, &tag_ids,
+        )
+        .await?,
     ))
 }
 
@@ -99,6 +115,17 @@ pub async fn delete_word(
 ) -> Result<StatusCode, ApiError> {
     WordService::delete(&state, book_id, id).await?;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// 替换单词标签集（全量）。
+pub async fn update_word_tags(
+    State(state): State<AppState>,
+    Path((book_id, id)): Path<(i32, i32)>,
+    Json(req): Json<UpdateWordTagsReq>,
+) -> Result<Json<WordResp>, ApiError> {
+    Ok(Json(
+        WordService::update_tags(&state, book_id, id, req).await?,
+    ))
 }
 
 /// 下载导入模板：format=csv|xlsx，缺省 csv。
@@ -182,4 +209,13 @@ pub async fn batch_delete_words(
     Ok(Json(
         WordService::batch_delete(&state, book_id, req.ids).await?,
     ))
+}
+
+/// 批量给单词打标签（限定归属该书，只添加）。
+pub async fn batch_tag_words(
+    State(state): State<AppState>,
+    Path(book_id): Path<i32>,
+    Json(req): Json<BatchTagWordsReq>,
+) -> Result<Json<BatchTagWordsResp>, ApiError> {
+    Ok(Json(WordService::batch_tag(&state, book_id, req).await?))
 }

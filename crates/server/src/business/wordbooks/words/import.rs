@@ -78,6 +78,7 @@ pub fn to_create_reqs(rows: &[RowData]) -> Result<Vec<CreateWordReq>, Vec<(usize
             phonetic: non_empty(&row.phonetic),
             definitions,
             example: non_empty(&row.example),
+            tags: Vec::new(),
         });
     }
     if errors.is_empty() {

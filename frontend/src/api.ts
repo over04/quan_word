@@ -1,22 +1,34 @@
 // 共享契约类型由后端 ts-rs 生成（frontend/src/generated/，cargo test 时刷新），此处仅转发。
 import type { BatchDeleteWordsReq } from './generated/BatchDeleteWordsReq'
 import type { BatchDeleteWordsResp } from './generated/BatchDeleteWordsResp'
+import type { BatchTagWordsReq } from './generated/BatchTagWordsReq'
+import type { BatchTagWordsResp } from './generated/BatchTagWordsResp'
+import type { CreateTagReq } from './generated/CreateTagReq'
 import type { CreateWordReq } from './generated/CreateWordReq'
 import type { CreateWordbookReq } from './generated/CreateWordbookReq'
 import type { Definition } from './generated/Definition'
 import type { ImportResp } from './generated/ImportResp'
 import type { Page } from './generated/Page'
+import type { Tag } from './generated/Tag'
+import type { UpdateTagReq } from './generated/UpdateTagReq'
+import type { UpdateWordTagsReq } from './generated/UpdateWordTagsReq'
 import type { Word } from './generated/Word'
 import type { Wordbook } from './generated/Wordbook'
 
 export type {
   BatchDeleteWordsReq,
   BatchDeleteWordsResp,
+  BatchTagWordsReq,
+  BatchTagWordsResp,
+  CreateTagReq,
   CreateWordReq,
   CreateWordbookReq,
   Definition,
   ImportResp,
   Page,
+  Tag,
+  UpdateTagReq,
+  UpdateWordTagsReq,
   Word,
   Wordbook,
 }
@@ -71,21 +83,23 @@ export const wordbooks = {
 }
 
 export const words = {
-  /** 纸质书浏览：可选排序（id_asc/id_desc/spelling/random）；random 需 seed（确定性打乱） */
-  list: (bookId: number, page: number, pageSize: number, opts?: { order?: string; seed?: string }) => {
+  /** 纸质书浏览：可选排序（id_asc/id_desc/spelling/random）；random 需 seed（确定性打乱）；tag 逗号分隔标签 id 交集筛选 */
+  list: (bookId: number, page: number, pageSize: number, opts?: { order?: string; seed?: string; tag?: string }) => {
     const order = opts?.order ? `&order=${encodeURIComponent(opts.order)}` : ''
     const seed = opts?.seed ? `&seed=${encodeURIComponent(opts.seed)}` : ''
+    const tag = opts?.tag ? `&tag=${encodeURIComponent(opts.tag)}` : ''
     return api<Page<Word>>(
-      `/api/wordbooks/${bookId}/words?page=${page}&page_size=${pageSize}${order}${seed}`,
+      `/api/wordbooks/${bookId}/words?page=${page}&page_size=${pageSize}${order}${seed}${tag}`,
     )
   },
-  /** 列表模式查询：书内搜索（spelling/释义）+ 排序 + 分页 */
-  query: (bookId: number, page: number, pageSize: number, opts?: { q?: string; sort?: string; order?: string }) => {
+  /** 列表模式查询：书内搜索（spelling/释义）+ 排序 + 标签交集筛选 + 分页 */
+  query: (bookId: number, page: number, pageSize: number, opts?: { q?: string; sort?: string; order?: string; tag?: string }) => {
     const q = opts?.q ? `&q=${encodeURIComponent(opts.q)}` : ''
     const sort = opts?.sort ? `&sort=${encodeURIComponent(opts.sort)}` : ''
     const order = opts?.order ? `&order=${encodeURIComponent(opts.order)}` : ''
+    const tag = opts?.tag ? `&tag=${encodeURIComponent(opts.tag)}` : ''
     return api<Page<Word>>(
-      `/api/wordbooks/${bookId}/words/query?page=${page}&page_size=${pageSize}${q}${sort}${order}`,
+      `/api/wordbooks/${bookId}/words/query?page=${page}&page_size=${pageSize}${q}${sort}${order}${tag}`,
     )
   },
   create: (bookId: number, req: CreateWordReq) =>
@@ -95,6 +109,12 @@ export const words = {
       method: 'PUT',
       body: JSON.stringify(req),
     }),
+  /** 替换单词标签集（全量） */
+  updateTags: (bookId: number, id: number, tagIds: number[]) =>
+    api<Word>(`/api/wordbooks/${bookId}/words/${id}/tags`, {
+      method: 'PUT',
+      body: JSON.stringify({ tags: tagIds } satisfies UpdateWordTagsReq),
+    }),
   remove: (bookId: number, id: number) =>
     api<void>(`/api/wordbooks/${bookId}/words/${id}`, { method: 'DELETE' }),
   /** 批量删除（限定归属该书） */
@@ -102,6 +122,12 @@ export const words = {
     api<BatchDeleteWordsResp>(`/api/wordbooks/${bookId}/words/batch-delete`, {
       method: 'POST',
       body: JSON.stringify({ ids } satisfies BatchDeleteWordsReq),
+    }),
+  /** 批量给单词打标签（只添加） */
+  batchTag: (bookId: number, wordIds: number[], tagIds: number[]) =>
+    api<BatchTagWordsResp>(`/api/wordbooks/${bookId}/words/batch-tag`, {
+      method: 'POST',
+      body: JSON.stringify({ word_ids: wordIds, tag_ids: tagIds } satisfies BatchTagWordsReq),
     }),
   /** 上传模板文件导入（csv / xlsx / xls / ods） */
   importFile: (bookId: number, file: File) => {
@@ -138,4 +164,14 @@ export const words = {
     a.click()
     URL.revokeObjectURL(url)
   },
+}
+
+export const tags = {
+  list: (bookId: number) => api<Tag[]>(`/api/wordbooks/${bookId}/tags`),
+  create: (bookId: number, req: CreateTagReq) =>
+    api<Tag>(`/api/wordbooks/${bookId}/tags`, { method: 'POST', body: JSON.stringify(req) }),
+  update: (bookId: number, id: number, req: UpdateTagReq) =>
+    api<Tag>(`/api/wordbooks/${bookId}/tags/${id}`, { method: 'PUT', body: JSON.stringify(req) }),
+  remove: (bookId: number, id: number) =>
+    api<void>(`/api/wordbooks/${bookId}/tags/${id}`, { method: 'DELETE' }),
 }

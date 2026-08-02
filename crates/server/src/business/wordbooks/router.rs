@@ -9,6 +9,7 @@ use super::dto::create::CreateWordbookReq;
 use super::dto::resp::WordbookResp;
 use super::dto::update::UpdateWordbookReq;
 use super::service::WordbookService;
+use super::tags;
 use super::words;
 use crate::common::error::ApiError;
 use crate::common::state::AppState;
@@ -24,6 +25,7 @@ pub fn router() -> Router<AppState> {
                 .delete(delete_wordbook),
         )
         .merge(words::router::router())
+        .merge(tags::router::router())
 }
 
 pub async fn list_wordbooks(

@@ -9,8 +9,9 @@ use crate::business::wordbooks::dto::resp::WordbookResp;
 /// 洗牌序列缓存上限（条）：超出后整体清空，避免缓存无限增长。
 pub const SHUFFLE_CACHE_CAP: usize = 8;
 
-/// random 打乱序列缓存条目：(book_id, seed) → 洗牌后的完整 id 序列
-type ShuffleCache = Arc<Mutex<HashMap<(i32, String), Vec<i32>>>>;
+/// random 打乱序列缓存条目：(book_id, 筛选标签 ids, seed) → 洗牌后的完整 id 序列
+/// （tag_ids 已排序去重；空 = 不筛选）
+type ShuffleCache = Arc<Mutex<HashMap<(i32, Vec<i32>, String), Vec<i32>>>>;
 
 /// 全局应用状态：共享数据库连接池 + 进程内存缓存。
 ///

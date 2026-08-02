@@ -12,6 +12,8 @@ pub struct WordResp {
     pub phonetic: Option<String>,
     pub definitions: Vec<Definition>,
     pub example: Option<String>,
+    /// 单词的标签 id 数组（按 id 升序）
+    pub tags: Vec<i32>,
     /// RFC3339 字符串（ts-rs 无 chrono feature，用 String 而非 DateTimeUtc）
     pub created_at: String,
     pub updated_at: String,

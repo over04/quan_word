@@ -8,4 +8,7 @@ pub struct UpdateWordReq {
     pub phonetic: Option<String>,
     pub definitions: Vec<Definition>,
     pub example: Option<String>,
+    /// 标签 id 数组（须属于该书），缺省为空
+    #[serde(default)]
+    pub tags: Vec<i32>,
 }

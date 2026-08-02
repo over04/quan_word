@@ -12,4 +12,7 @@ pub struct CreateWordReq {
     pub definitions: Vec<Definition>,
     #[ts(optional)]
     pub example: Option<String>,
+    /// 标签 id 数组（须属于该书），缺省为空
+    #[serde(default)]
+    pub tags: Vec<i32>,
 }

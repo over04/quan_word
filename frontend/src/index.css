@@ -138,3 +138,15 @@ body {
   transform: translateY(-2px);
   box-shadow: 0 12px 32px rgb(47 42 37 / 0.1);
 }
+
+/* —— iOS 刘海屏适配（standalone 添加到主屏幕，viewport-fit=cover）——
+   顶部悬浮导航让出状态栏；底部让出 Home Indicator。非刘海设备 env()=0，无影响。 */
+@supports (padding-top: env(safe-area-inset-top)) {
+  /* 覆盖 .py-4 的顶部内边距：取 py-4（1rem）与安全区的较大值 */
+  nav.fixed {
+    padding-top: max(1rem, env(safe-area-inset-top));
+  }
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+}
