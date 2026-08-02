@@ -1,0 +1,16 @@
+# Rust
+/target
+
+# Node
+frontend/node_modules
+
+# 前端构建产物（保留 .gitkeep 占位，rust-embed 编译期需要目录存在）
+frontend/dist/*
+!frontend/dist/.gitkeep
+
+# 运行数据（sqlite 数据库文件）
+/data
+
+# 日志与临时文件
+*.log
+.DS_Store
