@@ -58,7 +58,7 @@ export default function WordbookList({ onOpen }: Props) {
                 <BookIcon className="w-4 h-4" />
               </div>
               <span className="font-serif text-lg text-charcoal tracking-wide">
-                单词<span className="text-clay italic">本</span>
+                圈圈<span className="text-clay italic">单词</span>
               </span>
             </a>
             <button
@@ -84,7 +84,7 @@ export default function WordbookList({ onOpen }: Props) {
               WORD BOOKS
             </div>
             <h1 className="font-serif text-4xl lg:text-5xl text-charcoal leading-[1.15] mt-5 mb-4">
-              我的<span className="text-clay">单词本</span>
+              我的<span className="text-clay">圈圈单词</span>
             </h1>
             <p className="text-base text-charcoal/70 max-w-md leading-relaxed mb-6">
               集中管理你的单词书，在纸质书模式下自测记忆效果。
@@ -137,7 +137,7 @@ export default function WordbookList({ onOpen }: Props) {
       )}
 
       {/* 书架 */}
-      <main className="max-w-7xl mx-auto px-4 md:px-8 py-16 lg:py-20" id="books">
+      <main className="max-w-7xl mx-auto px-4 md:px-8 py-16 lg:py-20 scroll-mt-28" id="books">
         {loading ? (
           <p className="text-center text-charcoal/40 py-24 animate-pulse">加载中…</p>
         ) : books.length === 0 ? (

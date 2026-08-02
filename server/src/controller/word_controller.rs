@@ -11,7 +11,7 @@ use crate::dto::req::update_word_req::UpdateWordReq;
 use crate::dto::resp::page_resp::PageResp;
 use crate::dto::resp::word_resp::WordResp;
 use crate::error::ApiError;
-use crate::service::word_service::WordService;
+use crate::service::word_service::{WordOrder, WordService};
 use crate::state::AppState;
 
 pub async fn list_words(
@@ -20,7 +20,26 @@ pub async fn list_words(
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<PageResp<WordResp>>, ApiError> {
     let (page, page_size) = parse_page_params(&params)?;
-    let resp = WordService::list(&state.db, book_id, page, page_size).await?;
+    let order = WordOrder::parse(
+        params.get("order").map(String::as_str),
+        params.get("seed").map(String::as_str),
+    )?;
+    let resp = WordService::list(&state.db, book_id, page, page_size, &order).await?;
+    Ok(Json(resp))
+}
+
+/// 列表模式查询：搜索 + 排序 + 分页。
+pub async fn query_words(
+    State(state): State<AppState>,
+    Path(book_id): Path<i32>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<PageResp<WordResp>>, ApiError> {
+    let (page, page_size) = parse_page_params(&params)?;
+    let q = params.get("q").cloned();
+    let sort = params.get("sort").map(String::as_str).unwrap_or("created_at");
+    let order = params.get("order").map(String::as_str).unwrap_or("asc");
+    let resp =
+        WordService::query(&state.db, book_id, q, sort, order, page, page_size).await?;
     Ok(Json(resp))
 }
 

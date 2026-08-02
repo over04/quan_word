@@ -98,6 +98,10 @@
 }
 
 /* 基础色：暖米白底 + 深炭文字 */
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   background-color: #f8f4ef;
   color: #2f2a25;

@@ -38,10 +38,14 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
   // 一键模糊：整页单词（含音标）/ 释义（导航栏按钮切换）
   const [coverWord, setCoverWord] = useState(false)
   const [coverDef, setCoverDef] = useState(false)
+  // 打乱：seed 非空 = 随机顺序浏览（确定性，翻页稳定）
+  const [shuffleSeed, setShuffleSeed] = useState<string | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [error, setError] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<Word | null>(null)
+  // 列表模式刷新信号：增删改后递增，WordTable 重新查询
+  const [listRefresh, setListRefresh] = useState(0)
 
   // 分页缓存：key = `${bookId}:${page}:${size}`，避免重复请求；预取相邻页
   const cache = useRef<Map<string, Page<Word>>>(new Map())
@@ -66,45 +70,48 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
   }, [bookId])
 
   const loadPage = useCallback(
-    async (p: number, size: number, opts?: { prefetch?: boolean }) => {
-      const key = `${bookId}:${p}:${size}`
+    async (p: number, size: number, opts?: { prefetch?: boolean; seed?: string | null }) => {
+      // 排序参数影响内容，缓存 key 必须包含 seed
+      const seed = opts?.seed !== undefined ? opts.seed : shuffleSeed
+      const key = `${bookId}:${p}:${size}:${seed ?? ''}`
       const cached = cache.current.get(key)
       if (cached) {
         setData(cached)
-        if (opts?.prefetch !== false) prefetchNeighbors(p, size, cached.total_pages)
-        syncNeighbor(p, size)
+        if (opts?.prefetch !== false) prefetchNeighbors(p, size, cached.total_pages, seed)
+        syncNeighbor(p, size, seed)
         return
       }
       try {
         setError('')
-        const paged = await words.list(bookId, p, size)
+        const paged = await words.list(bookId, p, size, seed ? { order: 'random', seed } : undefined)
         cache.current.set(key, paged)
         setData(paged)
-        if (opts?.prefetch !== false) prefetchNeighbors(p, size, paged.total_pages)
-        syncNeighbor(p, size)
+        if (opts?.prefetch !== false) prefetchNeighbors(p, size, paged.total_pages, seed)
+        syncNeighbor(p, size, seed)
       } catch (e) {
         setError(e instanceof Error ? e.message : '加载失败')
       }
     },
-    [bookId, prefetchNeighbors],
+    [bookId, prefetchNeighbors, shuffleSeed],
   )
 
   /** 预取相邻页（缓存命中与网络加载两条路径都执行，保证滑动翻页时相邻页可见） */
-  function prefetchNeighbors(p: number, size: number, totalPages: number) {
-    if (p > 1 && !cache.current.has(`${bookId}:${p - 1}:${size}`)) {
-      const pk = `${bookId}:${p - 1}:${size}`
+  function prefetchNeighbors(p: number, size: number, totalPages: number, seed: string | null) {
+    const keyOf = (pp: number) => `${bookId}:${pp}:${size}:${seed ?? ''}`
+    if (p > 1 && !cache.current.has(keyOf(p - 1))) {
+      const pk = keyOf(p - 1)
       words
-        .list(bookId, p - 1, size)
+        .list(bookId, p - 1, size, seed ? { order: 'random', seed } : undefined)
         .then((r) => {
           cache.current.set(pk, r)
           setNeighbor((n) => ({ ...n, prev: r }))
         })
         .catch(() => {})
     }
-    if (p < totalPages && !cache.current.has(`${bookId}:${p + 1}:${size}`)) {
-      const nk = `${bookId}:${p + 1}:${size}`
+    if (p < totalPages && !cache.current.has(keyOf(p + 1))) {
+      const nk = keyOf(p + 1)
       words
-        .list(bookId, p + 1, size)
+        .list(bookId, p + 1, size, seed ? { order: 'random', seed } : undefined)
         .then((r) => {
           cache.current.set(nk, r)
           setNeighbor((n) => ({ ...n, next: r }))
@@ -114,11 +121,21 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
   }
 
   /** 从缓存同步相邻页数据（翻页后相邻页已预取或已缓存） */
-  function syncNeighbor(p: number, size: number) {
+  function syncNeighbor(p: number, size: number, seed: string | null) {
+    const keyOf = (pp: number) => `${bookId}:${pp}:${size}:${seed ?? ''}`
     setNeighbor({
-      prev: cache.current.get(`${bookId}:${p - 1}:${size}`) ?? null,
-      next: cache.current.get(`${bookId}:${p + 1}:${size}`) ?? null,
+      prev: cache.current.get(keyOf(p - 1)) ?? null,
+      next: cache.current.get(keyOf(p + 1)) ?? null,
     })
+  }
+
+  /** 打乱 / 恢复顺序：换 seed 并清缓存重载第 1 页 */
+  function toggleShuffle() {
+    const seed = shuffleSeed ? null : String(Date.now())
+    setShuffleSeed(seed)
+    cache.current.clear()
+    setPage(1)
+    loadPage(1, pageSize, { prefetch: true, seed })
   }
 
   // 首次加载第 1 页（含预取）
@@ -154,10 +171,11 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     loadPage(np, pageSize)
   }
 
-  /** 增删改后：清缓存重载当前页 + 刷新书信息 */
+  /** 增删改后：清缓存重载当前页 + 刷新书信息 + 触发列表模式重新查询 */
   async function onMutated() {
     cache.current.clear()
     await loadPage(page, pageSize, { prefetch: true })
+    setListRefresh((k) => k + 1)
     try {
       const bs = await wordbooks.list()
       setBook(bs.find((b) => b.id === bookId) ?? null)
@@ -229,8 +247,24 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                   </button>
                 ))}
               </div>
+              {/* 显示设置（仅纸质书模式，位置在模式切换旁） */}
+              {mode === 'paper' && (
+                <button
+                  onClick={() => setSettingsOpen((o) => !o)}
+                  className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 ${
+                    settingsOpen
+                      ? 'bg-charcoal text-ivory'
+                      : 'bg-sand/40 text-charcoal/70 hover:bg-sand/70'
+                  }`}
+                  aria-label="显示设置"
+                  aria-expanded={settingsOpen}
+                >
+                  <SettingsIcon className="w-4 h-4" />
+                </button>
+              )}
               {/* 一键模糊（纸质书模式）：单词含音标 / 释义 */}
               {mode === 'paper' && (
+                <>
                 <div className="bg-sand/30 rounded-full p-1 flex shrink-0" role="group" aria-label="一键模糊">
                   <button
                     aria-pressed={coverWord}
@@ -251,20 +285,20 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                     释义
                   </button>
                 </div>
+                {/* 打乱：随机顺序浏览（确定性 seed，翻页稳定） */}
+                <button
+                  aria-pressed={shuffleSeed !== null}
+                  onClick={toggleShuffle}
+                  className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap shrink-0 ${
+                    shuffleSeed !== null
+                      ? 'bg-charcoal text-ivory shadow-md'
+                      : 'text-charcoal/70 hover:text-charcoal'
+                  }`}
+                >
+                  打乱
+                </button>
+                </>
               )}
-              {/* 显示设置 */}
-              <button
-                onClick={() => setSettingsOpen((o) => !o)}
-                className={`w-8 h-8 rounded-full flex items-center justify-center transition-all shrink-0 ${
-                  settingsOpen
-                    ? 'bg-charcoal text-ivory'
-                    : 'bg-sand/40 text-charcoal/70 hover:bg-sand/70'
-                }`}
-                aria-label="显示设置"
-                aria-expanded={settingsOpen}
-              >
-                <SettingsIcon className="w-4 h-4" />
-              </button>
               <button
                 onClick={handleOpenCreate}
                 className="inline-flex items-center gap-1.5 bg-charcoal text-ivory px-4 py-2 rounded-full text-sm font-medium hover:bg-charcoal/90 transition-all shadow-lg shadow-charcoal/10 whitespace-nowrap shrink-0"
@@ -309,10 +343,8 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
         ) : (
           <div key="list" className="animate-fade-in-up">
             <WordTable
-              data={data}
-              page={page}
-              onPrev={goPrev}
-              onNext={goNext}
+              bookId={bookId}
+              refreshKey={listRefresh}
               onEdit={handleOpenEdit}
               onDelete={handleDelete}
             />

@@ -28,6 +28,10 @@ pub fn build(db: DatabaseConnection) -> Router {
             get(word_controller::list_words).post(word_controller::create_word),
         )
         .route(
+            "/api/wordbooks/{id}/words/query",
+            get(word_controller::query_words),
+        )
+        .route(
             "/api/words/{id}",
             put(word_controller::update_word).delete(word_controller::delete_word),
         )

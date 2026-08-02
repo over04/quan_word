@@ -1,8 +1,10 @@
+use std::collections::HashMap;
+
 use chrono::Utc;
 use entity::{word, wordbook};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, Set,
+    sea_query::{Condition, Expr, ExprTrait}, ActiveModelTrait, ColumnTrait, DatabaseConnection,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Set,
 };
 
 use crate::dto::req::create_word_req::CreateWordReq;
@@ -12,7 +14,31 @@ use crate::dto::resp::word_resp::WordResp;
 use crate::error::ApiError;
 use crate::model::definition::Definition;
 
-/// 单词业务逻辑：分页查询 / 创建 / 更新 / 删除。
+/// 单词列表排序方式：纸质书浏览顺序（id / 字母 / seeded 随机打乱）。
+pub enum WordOrder {
+    IdAsc,
+    IdDesc,
+    Spelling,
+    Random(String),
+}
+
+impl WordOrder {
+    /// 解析 order / seed 查询参数；白名单外的值返回 400。
+    pub fn parse(order: Option<&str>, seed: Option<&str>) -> Result<Self, ApiError> {
+        match order {
+            None | Some("id_asc") => Ok(Self::IdAsc),
+            Some("id_desc") => Ok(Self::IdDesc),
+            Some("spelling") => Ok(Self::Spelling),
+            Some("random") => match seed.filter(|s| !s.is_empty()) {
+                Some(seed) => Ok(Self::Random(seed.to_string())),
+                None => Err(ApiError::BadRequest("order=random 需要 seed 参数".into())),
+            },
+            Some(other) => Err(ApiError::BadRequest(format!("不支持的排序: {other}"))),
+        }
+    }
+}
+
+/// 单词业务逻辑：分页查询（含排序/打乱）/ 搜索查询 / 创建 / 更新 / 删除。
 pub struct WordService;
 
 impl WordService {
@@ -21,25 +47,99 @@ impl WordService {
         book_id: i32,
         page: u64,
         page_size: u64,
+        order: &WordOrder,
     ) -> Result<PageResp<WordResp>, ApiError> {
         Self::ensure_book_exists(db, book_id).await?;
-        let paginator = word::Entity::find()
-            .filter(word::Column::WordbookId.eq(book_id))
-            .order_by_asc(word::Column::Id)
-            .paginate(db, page_size);
+        match order {
+            // SQL 层排序分页：id / 字母序
+            WordOrder::IdAsc | WordOrder::IdDesc | WordOrder::Spelling => {
+                let mut q = word::Entity::find().filter(word::Column::WordbookId.eq(book_id));
+                q = match order {
+                    WordOrder::IdAsc => q.order_by_asc(word::Column::Id),
+                    WordOrder::IdDesc => q.order_by_desc(word::Column::Id),
+                    _ => q.order_by_asc(word::Column::Spelling),
+                };
+                let paginator = q.paginate(db, page_size);
+                let models = paginator.fetch_page(page - 1).await?;
+                let total = paginator.num_items().await?;
+                Self::to_page(models, total, page, page_size)
+            }
+            // 打乱：全量 id 按 seed 确定性洗牌（跨库一致），按页取 id 切片后查单词
+            WordOrder::Random(seed) => {
+                let ids: Vec<i32> = word::Entity::find()
+                    .select_only()
+                    .column(word::Column::Id)
+                    .filter(word::Column::WordbookId.eq(book_id))
+                    .into_tuple()
+                    .all(db)
+                    .await?;
+                let mut ordered = ids;
+                seeded_shuffle(&mut ordered, seed);
+                let total = ordered.len() as u64;
+                let slice: Vec<i32> = ordered
+                    .iter()
+                    .skip(((page - 1) * page_size) as usize)
+                    .take(page_size as usize)
+                    .copied()
+                    .collect();
+                let models = if slice.is_empty() {
+                    Vec::new()
+                } else {
+                    word::Entity::find()
+                        .filter(word::Column::WordbookId.eq(book_id))
+                        .filter(word::Column::Id.is_in(slice.iter().copied()))
+                        .all(db)
+                        .await?
+                };
+                // `IN` 查询结果无序：按切片顺序重排
+                let by_id: HashMap<i32, word::Model> =
+                    models.into_iter().map(|m| (m.id, m)).collect();
+                let ordered_models: Vec<word::Model> = slice
+                    .iter()
+                    .filter_map(|id| by_id.get(id).cloned())
+                    .collect();
+                Self::to_page(ordered_models, total, page, page_size)
+            }
+        }
+    }
+
+    /// 列表模式查询：书内搜索（拼写/释义模糊匹配）+ 白名单排序 + 分页。
+    pub async fn query(
+        db: &DatabaseConnection,
+        book_id: i32,
+        q: Option<String>,
+        sort: &str,
+        order: &str,
+        page: u64,
+        page_size: u64,
+    ) -> Result<PageResp<WordResp>, ApiError> {
+        Self::ensure_book_exists(db, book_id).await?;
+        let mut query = word::Entity::find().filter(word::Column::WordbookId.eq(book_id));
+        if let Some(q) = q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            let pat = format!("%{q}%");
+            query = query.filter(
+                Condition::any()
+                    .add(word::Column::Spelling.like(&pat))
+                    .add(word::Column::Phonetic.like(&pat))
+                    .add(word::Column::Example.like(&pat))
+                    .add(Expr::cust("CAST(definitions AS TEXT)").like(&pat)),
+            );
+        }
+        let column = match sort {
+            "spelling" => word::Column::Spelling,
+            "created_at" => word::Column::CreatedAt,
+            "updated_at" => word::Column::UpdatedAt,
+            other => return Err(ApiError::BadRequest(format!("不支持的排序字段: {other}"))),
+        };
+        query = match order {
+            "asc" => query.order_by_asc(column),
+            "desc" => query.order_by_desc(column),
+            other => return Err(ApiError::BadRequest(format!("order 必须为 asc 或 desc: {other}"))),
+        };
+        let paginator = query.paginate(db, page_size);
         let models = paginator.fetch_page(page - 1).await?;
         let total = paginator.num_items().await?;
-        let items = models
-            .iter()
-            .map(Self::to_resp)
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(PageResp {
-            items,
-            total,
-            page,
-            page_size,
-            total_pages: total.div_ceil(page_size),
-        })
+        Self::to_page(models, total, page, page_size)
     }
 
     pub async fn create(
@@ -113,6 +213,25 @@ impl WordService {
             example: model.example.clone(),
         })
     }
+
+    fn to_page(
+        models: Vec<word::Model>,
+        total: u64,
+        page: u64,
+        page_size: u64,
+    ) -> Result<PageResp<WordResp>, ApiError> {
+        let items = models
+            .iter()
+            .map(Self::to_resp)
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(PageResp {
+            items,
+            total,
+            page,
+            page_size,
+            total_pages: total.div_ceil(page_size),
+        })
+    }
 }
 
 fn validate(spelling: &str, definitions: &[Definition]) -> Result<(), ApiError> {
@@ -146,4 +265,22 @@ fn validate(spelling: &str, definitions: &[Definition]) -> Result<(), ApiError> 
 
 fn to_internal(e: serde_json::Error) -> ApiError {
     ApiError::Internal(anyhow::anyhow!("释义数据格式错误: {e}"))
+}
+
+/// 按 seed 确定性洗牌（Fisher-Yates + xorshift64*）：同一 seed 结果一致、跨数据库一致。
+fn seeded_shuffle(ids: &mut [i32], seed: &str) {
+    // FNV-1a 把 seed 字符串映射为 u64 种子（置 1 避免 0）
+    let mut s: u64 = 0xcbf29ce484222325;
+    for b in seed.bytes() {
+        s ^= u64::from(b);
+        s = s.wrapping_mul(0x100000001b3);
+    }
+    s |= 1;
+    for i in (1..ids.len()).rev() {
+        s ^= s << 13;
+        s ^= s >> 7;
+        s ^= s << 17;
+        let j = (s % (i as u64 + 1)) as usize;
+        ids.swap(i, j);
+    }
 }

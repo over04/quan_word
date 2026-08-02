@@ -24,6 +24,24 @@ export function BookIcon({ className }: IconProps) {
   )
 }
 
+export function SearchIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m21 21-4.3-4.3" />
+    </svg>
+  )
+}
+
+export function ArrowsUpDownIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M7 15v-9M3.5 9.5 7 6l3.5 3.5" />
+      <path d="M17 9v9M13.5 14.5 17 18l3.5-3.5" />
+    </svg>
+  )
+}
+
 export function PlusIcon({ className }: IconProps) {
   return (
     <svg {...base(className)}>

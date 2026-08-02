@@ -70,8 +70,23 @@ export const wordbooks = {
 }
 
 export const words = {
-  list: (bookId: number, page: number, pageSize: number) =>
-    api<Page<Word>>(`/api/wordbooks/${bookId}/words?page=${page}&page_size=${pageSize}`),
+  /** 纸质书浏览：可选排序（id_asc/id_desc/spelling/random）；random 需 seed（确定性打乱） */
+  list: (bookId: number, page: number, pageSize: number, opts?: { order?: string; seed?: string }) => {
+    const order = opts?.order ? `&order=${encodeURIComponent(opts.order)}` : ''
+    const seed = opts?.seed ? `&seed=${encodeURIComponent(opts.seed)}` : ''
+    return api<Page<Word>>(
+      `/api/wordbooks/${bookId}/words?page=${page}&page_size=${pageSize}${order}${seed}`,
+    )
+  },
+  /** 列表模式查询：书内搜索（spelling/释义）+ 排序 + 分页 */
+  query: (bookId: number, page: number, pageSize: number, opts?: { q?: string; sort?: string; order?: string }) => {
+    const q = opts?.q ? `&q=${encodeURIComponent(opts.q)}` : ''
+    const sort = opts?.sort ? `&sort=${encodeURIComponent(opts.sort)}` : ''
+    const order = opts?.order ? `&order=${encodeURIComponent(opts.order)}` : ''
+    return api<Page<Word>>(
+      `/api/wordbooks/${bookId}/words/query?page=${page}&page_size=${pageSize}${q}${sort}${order}`,
+    )
+  },
   create: (bookId: number, req: CreateWordReq) =>
     api<Word>(`/api/wordbooks/${bookId}/words`, { method: 'POST', body: JSON.stringify(req) }),
   update: (id: number, req: CreateWordReq) =>
