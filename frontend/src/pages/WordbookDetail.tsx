@@ -35,6 +35,9 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<number>(loadPageSize)
   const [fontScale, setFontScale] = useState<number>(loadFontScale)
+  // 一键模糊：整页单词（含音标）/ 释义（导航栏按钮切换）
+  const [coverWord, setCoverWord] = useState(false)
+  const [coverDef, setCoverDef] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [error, setError] = useState('')
   const [formOpen, setFormOpen] = useState(false)
@@ -42,6 +45,11 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
 
   // 分页缓存：key = `${bookId}:${page}:${size}`，避免重复请求；预取相邻页
   const cache = useRef<Map<string, Page<Word>>>(new Map())
+  // 相邻页数据（预取结果），供纸质书滑动翻页时直接可见
+  const [neighbor, setNeighbor] = useState<{ prev: Page<Word> | null; next: Page<Word> | null }>({
+    prev: null,
+    next: null,
+  })
 
   // 书信息只加载一次（不随翻页重复请求）
   useEffect(() => {
@@ -63,6 +71,8 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
       const cached = cache.current.get(key)
       if (cached) {
         setData(cached)
+        if (opts?.prefetch !== false) prefetchNeighbors(p, size, cached.total_pages)
+        syncNeighbor(p, size)
         return
       }
       try {
@@ -70,26 +80,46 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
         const paged = await words.list(bookId, p, size)
         cache.current.set(key, paged)
         setData(paged)
-        if (opts?.prefetch !== false) {
-          if (p > 1 && !cache.current.has(`${bookId}:${p - 1}:${size}`)) {
-            words
-              .list(bookId, p - 1, size)
-              .then((r) => cache.current.set(`${bookId}:${p - 1}:${size}`, r))
-              .catch(() => {})
-          }
-          if (p < paged.total_pages && !cache.current.has(`${bookId}:${p + 1}:${size}`)) {
-            words
-              .list(bookId, p + 1, size)
-              .then((r) => cache.current.set(`${bookId}:${p + 1}:${size}`, r))
-              .catch(() => {})
-          }
-        }
+        if (opts?.prefetch !== false) prefetchNeighbors(p, size, paged.total_pages)
+        syncNeighbor(p, size)
       } catch (e) {
         setError(e instanceof Error ? e.message : '加载失败')
       }
     },
-    [bookId],
+    [bookId, prefetchNeighbors],
   )
+
+  /** 预取相邻页（缓存命中与网络加载两条路径都执行，保证滑动翻页时相邻页可见） */
+  function prefetchNeighbors(p: number, size: number, totalPages: number) {
+    if (p > 1 && !cache.current.has(`${bookId}:${p - 1}:${size}`)) {
+      const pk = `${bookId}:${p - 1}:${size}`
+      words
+        .list(bookId, p - 1, size)
+        .then((r) => {
+          cache.current.set(pk, r)
+          setNeighbor((n) => ({ ...n, prev: r }))
+        })
+        .catch(() => {})
+    }
+    if (p < totalPages && !cache.current.has(`${bookId}:${p + 1}:${size}`)) {
+      const nk = `${bookId}:${p + 1}:${size}`
+      words
+        .list(bookId, p + 1, size)
+        .then((r) => {
+          cache.current.set(nk, r)
+          setNeighbor((n) => ({ ...n, next: r }))
+        })
+        .catch(() => {})
+    }
+  }
+
+  /** 从缓存同步相邻页数据（翻页后相邻页已预取或已缓存） */
+  function syncNeighbor(p: number, size: number) {
+    setNeighbor({
+      prev: cache.current.get(`${bookId}:${p - 1}:${size}`) ?? null,
+      next: cache.current.get(`${bookId}:${p + 1}:${size}`) ?? null,
+    })
+  }
 
   // 首次加载第 1 页（含预取）
   useEffect(() => {
@@ -161,32 +191,32 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
       {/* 悬浮胶囊导航 */}
       <nav className="fixed w-full top-0 z-40 py-4 px-4 md:px-8">
         <div className="max-w-7xl mx-auto">
-          <div className="bg-white/70 backdrop-blur-md border border-white/40 shadow-sm rounded-full px-6 py-3 flex items-center gap-3">
+          <div className="bg-white/70 backdrop-blur-md border border-white/40 shadow-sm rounded-full px-6 py-3 flex items-center gap-3 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <button
               onClick={onBack}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium text-charcoal/70 hover:bg-sand/40 hover:text-charcoal transition-colors"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium text-charcoal/70 hover:bg-sand/40 hover:text-charcoal transition-colors whitespace-nowrap shrink-0"
             >
               <ArrowLeftIcon className="w-4 h-4" />
               返回
             </button>
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-7 h-7 rounded-full bg-sage flex items-center justify-center text-white shrink-0">
-                <BookIcon className="w-3.5 h-3.5" />
-              </div>
-              <h1 className="font-serif text-base text-charcoal truncate">{book ? book.name : '…'}</h1>
-              {data && (
-                <span className="shrink-0 text-xs text-charcoal/40 tabular-nums">{data.total} 词</span>
-              )}
+            <div className="w-7 h-7 rounded-full bg-sage flex items-center justify-center text-white shrink-0">
+              <BookIcon className="w-3.5 h-3.5" />
             </div>
-            <div className="ml-auto flex items-center gap-2.5">
-              <div className="bg-sand/30 rounded-full p-1 flex" role="tablist" aria-label="视图模式">
+            <div className="flex items-center min-w-0 flex-1">
+              <h1 className="font-serif text-base text-charcoal truncate">{book ? book.name : '…'}</h1>
+            </div>
+            {data && (
+              <span className="shrink-0 text-xs text-charcoal/40 tabular-nums whitespace-nowrap">{data.total} 词</span>
+            )}
+            <div className="ml-auto flex items-center gap-2.5 shrink-0">
+              <div className="bg-sand/30 rounded-full p-1 flex shrink-0" role="tablist" aria-label="视图模式">
                 {(['paper', 'list'] as const).map((m) => (
                   <button
                     key={m}
                     role="tab"
                     aria-selected={mode === m}
                     onClick={() => setMode(m)}
-                    className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 ${
+                    className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap ${
                       mode === m
                         ? 'bg-charcoal text-ivory shadow-md'
                         : 'text-charcoal/70 hover:text-charcoal'
@@ -197,6 +227,29 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                   </button>
                 ))}
               </div>
+              {/* 一键模糊（纸质书模式）：单词含音标 / 释义 */}
+              {mode === 'paper' && (
+                <div className="bg-sand/30 rounded-full p-1 flex shrink-0" role="group" aria-label="一键模糊">
+                  <button
+                    aria-pressed={coverWord}
+                    onClick={() => setCoverWord((v) => !v)}
+                    className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap ${
+                      coverWord ? 'bg-charcoal text-ivory shadow-md' : 'text-charcoal/70 hover:text-charcoal'
+                    }`}
+                  >
+                    单词
+                  </button>
+                  <button
+                    aria-pressed={coverDef}
+                    onClick={() => setCoverDef((v) => !v)}
+                    className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap ${
+                      coverDef ? 'bg-charcoal text-ivory shadow-md' : 'text-charcoal/70 hover:text-charcoal'
+                    }`}
+                  >
+                    释义
+                  </button>
+                </div>
+              )}
               {/* 阅读设置 */}
               <div className="relative">
                 <button
@@ -206,7 +259,7 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                       ? 'bg-charcoal text-ivory'
                       : 'bg-sand/40 text-charcoal/70 hover:bg-sand/70'
                   }`}
-                  aria-label="阅读设置"
+                  aria-label="显示设置"
                   aria-expanded={settingsOpen}
                 >
                   <SettingsIcon className="w-4 h-4" />
@@ -223,7 +276,7 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
               </div>
               <button
                 onClick={handleOpenCreate}
-                className="inline-flex items-center gap-1.5 bg-charcoal text-ivory px-4 py-2 rounded-full text-sm font-medium hover:bg-charcoal/90 transition-all shadow-lg shadow-charcoal/10"
+                className="inline-flex items-center gap-1.5 bg-charcoal text-ivory px-4 py-2 rounded-full text-sm font-medium hover:bg-charcoal/90 transition-all shadow-lg shadow-charcoal/10 whitespace-nowrap shrink-0"
               >
                 <PlusIcon className="w-4 h-4" />
                 添加单词
@@ -237,23 +290,31 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
         {error && <p className="text-red-600 text-center mb-6">{error}</p>}
 
         {mode === 'paper' ? (
-          <PaperBookView
-            data={data}
-            page={page}
-            onPrev={goPrev}
-            onNext={goNext}
-            onAddFirst={handleOpenCreate}
-            fontScale={fontScale}
-          />
+          <div key="paper" className="animate-fade-in-up">
+            <PaperBookView
+              data={data}
+              page={page}
+              onPrev={goPrev}
+              onNext={goNext}
+              onAddFirst={handleOpenCreate}
+              fontScale={fontScale}
+              coverWord={coverWord}
+              coverDef={coverDef}
+              prevPage={neighbor.prev}
+              nextPage={neighbor.next}
+            />
+          </div>
         ) : (
-          <WordTable
-            data={data}
-            page={page}
-            onPrev={goPrev}
-            onNext={goNext}
-            onEdit={handleOpenEdit}
-            onDelete={handleDelete}
-          />
+          <div key="list" className="animate-fade-in-up">
+            <WordTable
+              data={data}
+              page={page}
+              onPrev={goPrev}
+              onNext={goNext}
+              onEdit={handleOpenEdit}
+              onDelete={handleDelete}
+            />
+          </div>
         )}
       </main>
 

@@ -52,8 +52,8 @@ export default function WordbookList({ onOpen }: Props) {
       {/* 悬浮胶囊导航 */}
       <nav className="fixed w-full top-0 z-40 py-4 px-4 md:px-8">
         <div className="max-w-7xl mx-auto">
-          <div className="bg-white/70 backdrop-blur-md border border-white/40 shadow-sm rounded-full px-6 py-3 flex justify-between items-center">
-            <a href="#" className="flex items-center gap-2.5">
+          <div className="bg-white/70 backdrop-blur-md border border-white/40 shadow-sm rounded-full px-6 py-3 flex justify-between items-center gap-3 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <a href="#" className="flex items-center gap-2.5 shrink-0 whitespace-nowrap">
               <div className="w-8 h-8 bg-sage rounded-full flex items-center justify-center text-white">
                 <BookIcon className="w-4 h-4" />
               </div>
@@ -66,7 +66,7 @@ export default function WordbookList({ onOpen }: Props) {
                 setEditing(null)
                 setFormOpen(true)
               }}
-              className="inline-flex items-center gap-2 bg-charcoal text-ivory px-5 py-2 rounded-full text-sm font-medium hover:bg-charcoal/90 transition-all shadow-lg shadow-charcoal/10"
+              className="inline-flex items-center gap-2 bg-charcoal text-ivory px-5 py-2 rounded-full text-sm font-medium hover:bg-charcoal/90 transition-all shadow-lg shadow-charcoal/10 whitespace-nowrap shrink-0"
             >
               <PlusIcon className="w-4 h-4" />
               新建单词书
@@ -176,7 +176,7 @@ export default function WordbookList({ onOpen }: Props) {
               >
                 {/* 封面：参考页同款纯色块 */}
                 <div
-                  className={`relative overflow-hidden rounded-2xl h-32 mb-5 shadow-sm border border-charcoal/5 ${COVER_COLORS[b.id % COVER_COLORS.length]} flex items-center justify-center transition-transform duration-300 group-hover:scale-[1.02]`}
+                  className={`relative overflow-hidden rounded-2xl h-32 mb-5 shadow-sm border border-charcoal/5 ${COVER_COLORS[b.id % COVER_COLORS.length]} flex items-center justify-center transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-lg group-hover:shadow-charcoal/15`}
                 >
                   <span
                     className={`font-serif text-5xl ${
@@ -187,13 +187,13 @@ export default function WordbookList({ onOpen }: Props) {
                   >
                     {b.name.charAt(0).toUpperCase()}
                   </span>
-                  <span className="absolute top-3 right-3 bg-white/90 text-charcoal text-xs px-2.5 py-1 rounded-full font-medium tabular-nums">
+                  <span className="absolute top-3 right-3 bg-white/90 text-charcoal text-xs px-2.5 py-1 rounded-full font-medium tabular-nums transition-colors duration-300 group-hover:bg-white">
                     {b.word_count} 词
                   </span>
                 </div>
                 {/* 内容 */}
                 <div className="px-1">
-                  <h2 className="font-serif text-lg text-charcoal">{b.name}</h2>
+                  <h2 className="font-serif text-lg text-charcoal transition-colors duration-300 group-hover:text-clay">{b.name}</h2>
                   <p className="mt-1.5 text-xs text-charcoal/60 line-clamp-2 leading-relaxed">
                     {b.description || '暂无描述'}
                   </p>

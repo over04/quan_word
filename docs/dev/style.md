@@ -55,8 +55,8 @@ bg-white/70 backdrop-blur-md border border-white/40 shadow-sm rounded-full px-6 
 - **纸张**：`bg-[#FDFAF4] rounded-2xl shadow-sm border-charcoal/5`，宽度 `w-full` 随屏幕；下层垫一张 `bg-[#F2EAE0] translate-x-2 translate-y-2` 模拟纸堆
 - **装订线**：左侧 `w-px bg-[#E9B8BC]/70`，内容区整体右移避开（grid `px-9 md:px-11`）
 - **行结构**：每条横线（`h-px bg-[#E7DAC6]`）对应一行；**单词在横线上方**（底部贴线）、**释义在横线下方**；一行可容纳多个单词（`grid-cols-2 sm:3 lg:4 2xl:5` 随屏）
-- **遮挡自测**：点单词/释义 → 深炭墨条（`bg-charcoal text-transparent` + `shadow-[inset_0_2px_4px_rgba(0,0,0,0.3)]`），保留原文宽度零跳动；按钮带 `aria-pressed`
-- **翻页**（电子书式，无按钮）：点击纸面左/右 1/3 热区翻页（hover 显示半透明 chevron）；按住拖动拟真跟随（`translateX + rotateY`，阈值 90px）；键盘 ←/→；翻页动画 `pageIn`（perspective 1600px，从右侧翻入）+ 翻走态（左移 16% + rotateY 8deg + opacity 0.45）
+- **遮挡自测**：点单词/释义 → 文字**模糊晕开**（`blur-[5px]`，保留原文与宽度、零跳动，过渡 200ms）；按钮带 `aria-pressed`
+- **翻页**（电子书式，无按钮）：三页轨道（[上一页, 当前页, 下一页]）水平滑动——点击纸面左/右 1/3 热区（hover 显示半透明 chevron）、按住拖动跟手（**滑动过程中相邻页内容直接可见**，阈值 90px 或 18% 宽）、键盘 ←/→；释放过阈值 0.45s 平滑滑到相邻页，数据就位后轨道重挂载对齐（无过渡、无闪烁）
 - **页脚**：细进度条（`h-0.5 bg-charcoal/10`，填充 `bg-clay`）+ 页码（`第 X 页 · 共 Y 页`），无操作提示文字
 
 ## 列表模式（WordTable）
@@ -72,19 +72,26 @@ bg-white/70 backdrop-blur-md border border-white/40 shadow-sm rounded-full px-6 
 - 输入：`bg-white border-charcoal/15 text-sm focus:border-clay focus:outline-none`
 - 词性必须用下拉枚举（`POS_OPTIONS` 13 项，空值占位灰色 `text-charcoal/35` 且 `disabled hidden` 不出现在列表）；后端 `word_service.rs` 同步校验
 
-## 阅读设置（SettingsPanel）
+## 显示设置（SettingsPanel）
 
 - 每页单词数：滑块 10–200（step 10）；字号：滑块 12–28px（单词字号，音标 ×0.55、释义 ×0.6、行高 ×1.7 按比例联动）
 - 滑块拖动中仅更新显示值（draft state），`onPointerUp`/`onKeyUp` 才应用；持久化 `localStorage`（`qw_page_size` / `qw_font_scale`）
 
+## 一键模糊（导航栏，纸质书模式）
+
+- 「单词」「释义」两个胶囊按钮（选中态 `bg-charcoal text-ivory shadow-md`，带 `aria-pressed`）——点击整页模糊，再点恢复
+- 「单词」按钮同时模糊音标（音标不单独控制）；逐词点击遮挡与一键模糊叠加生效
+- 翻页后保持（全局模式，不随翻页清空）
+
 ## 动画
 
 ```css
-@keyframes morph     /* blob 形变，仅背景装饰 */
-@keyframes fadeInUp  /* 0.8s cubic-bezier(0.2,0.8,0.2,1)，弹窗/区块进入 */
+@keyframes popIn     /* 0.38s 缩放浮现，弹窗面板 */
+@keyframes wordRise  /* 0.45s 上浮淡入，单词行（仅首屏播放，翻页后抑制） */
+@keyframes fadeInUp  /* 0.8s cubic-bezier(0.2,0.8,0.2,1)，区块进入 */
 @keyframes fadeIn    /* 0.6s，遮罩 */
-@keyframes pageIn    /* 0.4s，翻页进入：translateX(16%) rotateY(-9deg) → 0 */
 ```
+翻页滑动：轨道 `w-[300%]` + 纸张 `basis-1/3`，`translateX((offset-1)*33.333%)`（offset 0 = 中间页居中）；拖拽 `transition: none`，释放/翻页 `0.45s cubic-bezier(0.22,0.8,0.22,1)`；翻页完成后轨道 key 自增重挂载（对齐复位，无过渡）。
 `prefers-reduced-motion: reduce` 下全部禁用。
 
 ## 响应式

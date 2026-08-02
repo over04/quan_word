@@ -82,7 +82,7 @@ export default function WordFormModal({ bookId, initial, onClose, onSaved }: Pro
       <form
         onSubmit={handleSubmit}
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-white rounded-[2rem] border border-charcoal/5 shadow-2xl shadow-charcoal/15 p-8 md:p-9 animate-fade-in-up"
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto bg-white rounded-[2rem] border border-charcoal/5 shadow-2xl shadow-charcoal/15 p-8 md:p-9 animate-pop-in"
       >
         <div className="flex items-center gap-3">
           <div className="w-9 h-9 rounded-full bg-sage flex items-center justify-center text-white">

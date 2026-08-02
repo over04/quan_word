@@ -13,7 +13,7 @@ const PAGE_SIZE_MAX = 200
 const FONT_MIN = 12
 const FONT_MAX = 28
 
-/** 阅读设置面板：每页单词数（滑块）+ 字号（滑块） */
+/** 显示设置面板：每页单词数/字号滑块 */
 export default function SettingsPanel({
   pageSize,
   fontScale,
@@ -28,7 +28,7 @@ export default function SettingsPanel({
   return (
     <div className="absolute right-0 top-12 z-50 w-72 bg-white rounded-2xl border border-charcoal/10 shadow-xl shadow-charcoal/10 p-5 animate-fade-in-up">
       <div className="flex items-center justify-between">
-        <p className="font-serif text-base text-charcoal">阅读设置</p>
+        <p className="font-serif text-base text-charcoal">显示设置</p>
         <button
           onClick={onClose}
           className="w-7 h-7 rounded-full text-charcoal/40 hover:bg-sand/40 hover:text-charcoal transition-colors"

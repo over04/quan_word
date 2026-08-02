@@ -24,19 +24,72 @@
   to { opacity: 1; }
 }
 
-/* 翻页拟真：新页从右侧翻入 */
-@keyframes pageIn {
-  from { transform: translateX(16%) rotateY(-9deg); opacity: 0; }
-  to { transform: translateX(0) rotateY(0); opacity: 1; }
+/* 弹窗：缩放浮现 */
+@keyframes popIn {
+  from { opacity: 0; transform: scale(0.94) translateY(10px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
 }
-.animate-page-in {
-  animation: pageIn 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+.animate-pop-in {
+  animation: popIn 0.38s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
+/* 单词行浮现（进入页面时逐行淡入） */
+@keyframes wordRise {
+  from { opacity: 0; transform: translateY(7px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-word-rise {
+  animation: wordRise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* ============ 3D 仿真翻书 ============
+   以左缘为轴（transform-origin: left center），配合双面渲染（backface）
+   翻下一页：旧页向左翻起越过左缘（背面朝外），新页从右侧立起落下 */
+@keyframes flipOutNext {
+  from { transform: rotateY(0deg); box-shadow: 0 8px 24px rgb(47 42 37 / 0.06); }
+  45% { box-shadow: 26px 30px 70px rgb(47 42 37 / 0.2); }
+  to { transform: rotateY(-172deg); box-shadow: 26px 30px 70px rgb(47 42 37 / 0.2); }
+}
+@keyframes flipOutPrev {
+  from { transform: rotateY(0deg); box-shadow: 0 8px 24px rgb(47 42 37 / 0.06); }
+  45% { box-shadow: -26px 30px 70px rgb(47 42 37 / 0.2); }
+  to { transform: rotateY(172deg); box-shadow: -26px 30px 70px rgb(47 42 37 / 0.2); }
+}
+@keyframes flipInNext {
+  from { transform: rotateY(-105deg); box-shadow: 26px 30px 70px rgb(47 42 37 / 0.2); }
+  to { transform: rotateY(0deg); box-shadow: 0 8px 24px rgb(47 42 37 / 0.06); }
+}
+@keyframes flipInPrev {
+  from { transform: rotateY(105deg); box-shadow: -26px 30px 70px rgb(47 42 37 / 0.2); }
+  to { transform: rotateY(0deg); box-shadow: 0 8px 24px rgb(47 42 37 / 0.06); }
+}
+.page-flip-out-next {
+  animation: flipOutNext 0.34s cubic-bezier(0.3, 0, 0.3, 1) both;
+  transform-origin: left center;
+}
+.page-flip-out-prev {
+  animation: flipOutPrev 0.34s cubic-bezier(0.3, 0, 0.3, 1) both;
+  transform-origin: left center;
+}
+.page-flip-in-next {
+  animation: flipInNext 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  transform-origin: left center;
+}
+.page-flip-in-prev {
+  animation: flipInPrev 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  transform-origin: left center;
+}
+
+/* 翻页拟真（旧版平移式，已由 3D 翻书替代） */
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-in-up,
   .animate-fade-in,
-  .animate-page-in {
+  .animate-pop-in,
+  .animate-word-rise,
+  .page-flip-out-next,
+  .page-flip-out-prev,
+  .page-flip-in-next,
+  .page-flip-in-prev {
     animation: none;
   }
   [class*="transition-all"] {

@@ -107,6 +107,7 @@ No test suite exists yet; verification is via API smoke tests (curl) and manual 
 
 ## Runtime/Tooling Preferences
 
+- **Git**: 提交必须经用户明确允许，每次允许只提交一次（一次性提交，不自动追加/重复提交）。
 - **Rust**: stable-equivalent (local toolchain is nightly 1.94); edition 2021; workspace resolver 2. Cargo add for deps; axum must stay 0.8.x (`{id}` path syntax).
 - **Node**: v25, npm 11. Vite 8 + Tailwind v4 via `@tailwindcss/vite` plugin (no tailwind.config.js; CSS-first `@theme`).
 - **No linter/formatter gate** configured in repo (no rustfmt/clippy config, no eslint run in build); `tsc -b` runs as part of `npm run build`.
