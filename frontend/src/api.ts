@@ -62,6 +62,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const wordbooks = {
   list: () => api<Wordbook[]>('/api/wordbooks'),
+  get: (id: number) => api<Wordbook>(`/api/wordbooks/${id}`),
   create: (req: CreateWordbookReq) =>
     api<Wordbook>('/api/wordbooks', { method: 'POST', body: JSON.stringify(req) }),
   update: (id: number, req: Partial<CreateWordbookReq>) =>

@@ -79,10 +79,12 @@ No test suite exists yet; verification is via API smoke tests (curl) and manual 
 - **Naming:** `word_service.rs` / `word_controller.rs` / `create_word_req.rs` — kebab snake_case files matching their primary symbol.
 
 **Backend patterns:**
-- Services are unit structs (`pub struct WordService;`) with associated async fns taking `&DatabaseConnection` as first arg.
+- Services are unit structs (`pub struct WordService;`) with associated async fns taking `&AppState` as first arg (access DB via `state.db.as_ref()`); `AppState` holds the DB pool plus two process-memory caches: `wordbooks_cache` (list result, invalidated by wordbook CRUD + word create/delete) and `shuffle_cache` ((book_id, seed) → shuffled id sequence, cap 8 entries, cleared on word create/delete). Locks are `parking_lot::Mutex`, never held across `.await`.
 - Handlers return `Result<impl IntoResponse, ApiError>`; `?` converts `DbErr` via `From`. `ApiError::BadRequest/NotFound/Db/Internal` map to 400/404/500.
 - Validation returns `ApiError::BadRequest("中文错误信息")` — error messages are user-facing Chinese.
 - SeaORM: `Entity::find().filter(Column::X.eq(v)).order_by_asc(...).paginate(db, size)`, then `fetch_page(page - 1)` (**0-based offset**) + `num_items()`; API pages are 1-based. `total_pages = total.div_ceil(page_size)`.
+- SQLite: `db.rs` sets `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`, `cache_size=-20000` after connect.
+- Static assets: `assets/` (Vite hashed) and `fonts/` (versioned woff2) served with `Cache-Control: public, max-age=31536000, immutable`; index.html `no-cache`. Whole router wrapped in tower-http `CompressionLayer` (gzip). Fonts are self-hosted in `frontend/public/fonts/` (no Google Fonts CDN).
 - Axum 0.8 path syntax: `/api/wordbooks/{id}` (curly braces).
 
 **Frontend patterns:**

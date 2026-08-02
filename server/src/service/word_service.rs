@@ -13,6 +13,8 @@ use crate::dto::resp::page_resp::PageResp;
 use crate::dto::resp::word_resp::WordResp;
 use crate::error::ApiError;
 use crate::model::definition::Definition;
+use crate::service::wordbook_service::invalidate_wordbooks;
+use crate::state::AppState;
 
 /// 单词列表排序方式：纸质书浏览顺序（id / 字母 / seeded 随机打乱）。
 pub enum WordOrder {
@@ -43,12 +45,13 @@ pub struct WordService;
 
 impl WordService {
     pub async fn list(
-        db: &DatabaseConnection,
+        state: &AppState,
         book_id: i32,
         page: u64,
         page_size: u64,
         order: &WordOrder,
     ) -> Result<PageResp<WordResp>, ApiError> {
+        let db = state.db.as_ref();
         Self::ensure_book_exists(db, book_id).await?;
         match order {
             // SQL 层排序分页：id / 字母序
@@ -66,15 +69,30 @@ impl WordService {
             }
             // 打乱：全量 id 按 seed 确定性洗牌（跨库一致），按页取 id 切片后查单词
             WordOrder::Random(seed) => {
-                let ids: Vec<i32> = word::Entity::find()
-                    .select_only()
-                    .column(word::Column::Id)
-                    .filter(word::Column::WordbookId.eq(book_id))
-                    .into_tuple()
-                    .all(db)
-                    .await?;
-                let mut ordered = ids;
-                seeded_shuffle(&mut ordered, seed);
+                // 洗牌序列缓存：(book_id, seed) → 完整 id 序列，避免每页请求重复全量洗牌
+                // 注意：锁 guard 立即 drop，禁止跨 await 持有（parking_lot guard 非 Send）
+                let key = (book_id, seed.clone());
+                let cached = state.shuffle_cache.lock().get(&key).cloned();
+                let ordered = match cached {
+                    Some(v) => v,
+                    None => {
+                        let ids: Vec<i32> = word::Entity::find()
+                            .select_only()
+                            .column(word::Column::Id)
+                            .filter(word::Column::WordbookId.eq(book_id))
+                            .into_tuple()
+                            .all(db)
+                            .await?;
+                        let mut ordered = ids;
+                        seeded_shuffle(&mut ordered, seed);
+                        let mut m = state.shuffle_cache.lock();
+                        if m.len() >= 8 {
+                            m.clear();
+                        }
+                        m.insert(key, ordered.clone());
+                        ordered
+                    }
+                };
                 let total = ordered.len() as u64;
                 let slice: Vec<i32> = ordered
                     .iter()
@@ -105,7 +123,7 @@ impl WordService {
 
     /// 列表模式查询：书内搜索（拼写/释义模糊匹配）+ 白名单排序 + 分页。
     pub async fn query(
-        db: &DatabaseConnection,
+        state: &AppState,
         book_id: i32,
         q: Option<String>,
         sort: &str,
@@ -113,6 +131,7 @@ impl WordService {
         page: u64,
         page_size: u64,
     ) -> Result<PageResp<WordResp>, ApiError> {
+        let db = state.db.as_ref();
         Self::ensure_book_exists(db, book_id).await?;
         let mut query = word::Entity::find().filter(word::Column::WordbookId.eq(book_id));
         if let Some(q) = q.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
@@ -143,11 +162,12 @@ impl WordService {
     }
 
     pub async fn create(
-        db: &DatabaseConnection,
+        state: &AppState,
         book_id: i32,
         req: CreateWordReq,
     ) -> Result<WordResp, ApiError> {
         validate(&req.spelling, &req.definitions)?;
+        let db = state.db.as_ref();
         Self::ensure_book_exists(db, book_id).await?;
         let now = Utc::now();
         let model = word::ActiveModel {
@@ -162,15 +182,19 @@ impl WordService {
         }
         .insert(db)
         .await?;
+        // 新词影响列表页 word_count 与洗牌 id 集合：两个缓存都失效
+        invalidate_wordbooks(state);
+        state.shuffle_cache.lock().clear();
         Self::to_resp(&model)
     }
 
     pub async fn update(
-        db: &DatabaseConnection,
+        state: &AppState,
         id: i32,
         req: UpdateWordReq,
     ) -> Result<WordResp, ApiError> {
         validate(&req.spelling, &req.definitions)?;
+        let db = state.db.as_ref();
         let w = word::Entity::find_by_id(id)
             .one(db)
             .await?
@@ -185,11 +209,15 @@ impl WordService {
         Self::to_resp(&saved)
     }
 
-    pub async fn delete(db: &DatabaseConnection, id: i32) -> Result<(), ApiError> {
+    pub async fn delete(state: &AppState, id: i32) -> Result<(), ApiError> {
+        let db = state.db.as_ref();
         let res = word::Entity::delete_by_id(id).exec(db).await?;
         if res.rows_affected == 0 {
             return Err(ApiError::NotFound(format!("单词 {id} 不存在")));
         }
+        // 删除影响列表页 word_count 与洗牌 id 集合：两个缓存都失效
+        invalidate_wordbooks(state);
+        state.shuffle_cache.lock().clear();
         Ok(())
     }
 

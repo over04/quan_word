@@ -14,6 +14,14 @@ pub async fn init(url: &str) -> Result<DatabaseConnection> {
     let db = Database::connect(url).await?;
     if url.starts_with("sqlite:") {
         db.execute_unprepared("PRAGMA foreign_keys = ON").await?;
+        // WAL：读写并发不互斥（翻页预取与写操作同时进行时不锁库）
+        db.execute_unprepared("PRAGMA journal_mode = WAL").await?;
+        // WAL 下崩溃安全性与性能的平衡点
+        db.execute_unprepared("PRAGMA synchronous = NORMAL").await?;
+        // 并发写等待 5s 而非立即报 SQLITE_BUSY
+        db.execute_unprepared("PRAGMA busy_timeout = 5000").await?;
+        // 页缓存 20MB（默认约 2MB）
+        db.execute_unprepared("PRAGMA cache_size = -20000").await?;
     }
     migration::Migrator::up(&db, None).await?;
     Ok(db)

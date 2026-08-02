@@ -22,15 +22,27 @@ pub async fn static_handler(uri: Uri) -> Response {
     match Asset::get(path) {
         Some(file) => {
             let mime = mime_guess::from_path(path).first_or_octet_stream();
+            // Vite 产物与 self-host 字体文件名含内容 hash：可长期缓存；其余（index.html/favicon 等）不缓存
+            let cache = if path.starts_with("assets/") || path.starts_with("fonts/") {
+                "public, max-age=31536000, immutable"
+            } else {
+                "no-cache"
+            };
             (
-                [(header::CONTENT_TYPE, mime.as_ref())],
+                [
+                    (header::CONTENT_TYPE, mime.as_ref()),
+                    (header::CACHE_CONTROL, cache),
+                ],
                 Body::from(file.data),
             )
                 .into_response()
         }
         None => match Asset::get("index.html") {
             Some(file) => (
-                [(header::CONTENT_TYPE, "text/html")],
+                [
+                    (header::CONTENT_TYPE, "text/html"),
+                    (header::CACHE_CONTROL, "no-cache"),
+                ],
                 Body::from(file.data),
             )
                 .into_response(),

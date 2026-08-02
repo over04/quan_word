@@ -24,7 +24,7 @@ pub async fn list_words(
         params.get("order").map(String::as_str),
         params.get("seed").map(String::as_str),
     )?;
-    let resp = WordService::list(&state.db, book_id, page, page_size, &order).await?;
+    let resp = WordService::list(&state, book_id, page, page_size, &order).await?;
     Ok(Json(resp))
 }
 
@@ -39,7 +39,7 @@ pub async fn query_words(
     let sort = params.get("sort").map(String::as_str).unwrap_or("created_at");
     let order = params.get("order").map(String::as_str).unwrap_or("asc");
     let resp =
-        WordService::query(&state.db, book_id, q, sort, order, page, page_size).await?;
+        WordService::query(&state, book_id, q, sort, order, page, page_size).await?;
     Ok(Json(resp))
 }
 
@@ -48,7 +48,7 @@ pub async fn create_word(
     Path(book_id): Path<i32>,
     Json(req): Json<CreateWordReq>,
 ) -> Result<(StatusCode, Json<WordResp>), ApiError> {
-    let resp = WordService::create(&state.db, book_id, req).await?;
+    let resp = WordService::create(&state, book_id, req).await?;
     Ok((StatusCode::CREATED, Json(resp)))
 }
 
@@ -57,7 +57,7 @@ pub async fn update_word(
     Path(id): Path<i32>,
     Json(req): Json<UpdateWordReq>,
 ) -> Result<Json<WordResp>, ApiError> {
-    let resp = WordService::update(&state.db, id, req).await?;
+    let resp = WordService::update(&state, id, req).await?;
     Ok(Json(resp))
 }
 
@@ -65,7 +65,7 @@ pub async fn delete_word(
     State(state): State<AppState>,
     Path(id): Path<i32>,
 ) -> Result<StatusCode, ApiError> {
-    WordService::delete(&state.db, id).await?;
+    WordService::delete(&state, id).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

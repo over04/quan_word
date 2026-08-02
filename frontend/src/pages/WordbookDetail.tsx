@@ -55,13 +55,13 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     next: null,
   })
 
-  // 书信息只加载一次（不随翻页重复请求）
+  // 书信息只加载一次（不随翻页重复请求）；单书接口，不再拉全量列表
   useEffect(() => {
     let alive = true
     wordbooks
-      .list()
-      .then((bs) => {
-        if (alive) setBook(bs.find((b) => b.id === bookId) ?? null)
+      .get(bookId)
+      .then((b) => {
+        if (alive) setBook(b)
       })
       .catch((e) => setError(e instanceof Error ? e.message : '加载失败'))
     return () => {
@@ -177,8 +177,8 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     await loadPage(page, pageSize, { prefetch: true })
     setListRefresh((k) => k + 1)
     try {
-      const bs = await wordbooks.list()
-      setBook(bs.find((b) => b.id === bookId) ?? null)
+      const b = await wordbooks.get(bookId)
+      setBook(b)
     } catch {
       // 书信息刷新失败不影响单词列表
     }
