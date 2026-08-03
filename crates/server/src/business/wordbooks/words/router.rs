@@ -1,5 +1,5 @@
 use axum::{
-    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     routing::{get, post, put},
     Json, Router,
@@ -23,6 +23,7 @@ use super::service::WordService;
 use super::sort::SortField;
 use super::sort_dir::SortDir;
 use crate::common::error::ApiError;
+use crate::common::http::{json::ApiJson, path::ApiPath};
 use crate::common::model::page::PageResp;
 use crate::common::model::paging::parse_paging;
 use crate::common::state::AppState;
@@ -63,7 +64,7 @@ pub fn router() -> Router<AppState> {
 
 pub async fn list_words(
     State(state): State<AppState>,
-    Path(book_id): Path<i32>,
+    ApiPath(book_id): ApiPath<i32>,
     Query(query): Query<ListWordsQuery>,
 ) -> Result<Json<PageResp<WordResp>>, ApiError> {
     let (page, page_size) = parse_paging(query.page.as_deref(), query.page_size.as_deref())?;
@@ -77,7 +78,7 @@ pub async fn list_words(
 /// 列表模式查询：搜索 + 排序 + 分页。
 pub async fn query_words(
     State(state): State<AppState>,
-    Path(book_id): Path<i32>,
+    ApiPath(book_id): ApiPath<i32>,
     Query(query): Query<SearchWordsQuery>,
 ) -> Result<Json<PageResp<WordResp>>, ApiError> {
     let (page, page_size) = parse_paging(query.page.as_deref(), query.page_size.as_deref())?;
@@ -94,8 +95,8 @@ pub async fn query_words(
 
 pub async fn create_word(
     State(state): State<AppState>,
-    Path(book_id): Path<i32>,
-    Json(req): Json<CreateWordReq>,
+    ApiPath(book_id): ApiPath<i32>,
+    ApiJson(req): ApiJson<CreateWordReq>,
 ) -> Result<(StatusCode, Json<WordResp>), ApiError> {
     let resp = WordService::create(&state, book_id, req).await?;
     Ok((StatusCode::CREATED, Json(resp)))
@@ -103,15 +104,15 @@ pub async fn create_word(
 
 pub async fn update_word(
     State(state): State<AppState>,
-    Path((book_id, id)): Path<(i32, i32)>,
-    Json(req): Json<UpdateWordReq>,
+    ApiPath((book_id, id)): ApiPath<(i32, i32)>,
+    ApiJson(req): ApiJson<UpdateWordReq>,
 ) -> Result<Json<WordResp>, ApiError> {
     Ok(Json(WordService::update(&state, book_id, id, req).await?))
 }
 
 pub async fn delete_word(
     State(state): State<AppState>,
-    Path((book_id, id)): Path<(i32, i32)>,
+    ApiPath((book_id, id)): ApiPath<(i32, i32)>,
 ) -> Result<StatusCode, ApiError> {
     WordService::delete(&state, book_id, id).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -120,8 +121,8 @@ pub async fn delete_word(
 /// 替换单词标签集（全量）。
 pub async fn update_word_tags(
     State(state): State<AppState>,
-    Path((book_id, id)): Path<(i32, i32)>,
-    Json(req): Json<UpdateWordTagsReq>,
+    ApiPath((book_id, id)): ApiPath<(i32, i32)>,
+    ApiJson(req): ApiJson<UpdateWordTagsReq>,
 ) -> Result<Json<WordResp>, ApiError> {
     Ok(Json(
         WordService::update_tags(&state, book_id, id, req).await?,
@@ -131,7 +132,7 @@ pub async fn update_word_tags(
 /// 下载导入模板：format=csv|xlsx，缺省 csv。
 pub async fn download_template(
     State(state): State<AppState>,
-    Path(book_id): Path<i32>,
+    ApiPath(book_id): ApiPath<i32>,
     Query(query): Query<TemplateQuery>,
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
     // 校验单词书存在（404 提示更友好）
@@ -175,7 +176,7 @@ pub async fn download_template(
 /// 上传导入：multipart 字段 file，接受 csv / xlsx / xls / ods。
 pub async fn import_words(
     State(state): State<AppState>,
-    Path(book_id): Path<i32>,
+    ApiPath(book_id): ApiPath<i32>,
     mut multipart: Multipart,
 ) -> Result<Json<ImportResp>, ApiError> {
     let mut file: Option<(String, Vec<u8>)> = None;
@@ -203,8 +204,8 @@ pub async fn import_words(
 /// 批量删除单词（限定归属该书）。
 pub async fn batch_delete_words(
     State(state): State<AppState>,
-    Path(book_id): Path<i32>,
-    Json(req): Json<BatchDeleteWordsReq>,
+    ApiPath(book_id): ApiPath<i32>,
+    ApiJson(req): ApiJson<BatchDeleteWordsReq>,
 ) -> Result<Json<BatchDeleteWordsResp>, ApiError> {
     Ok(Json(
         WordService::batch_delete(&state, book_id, req.ids).await?,
@@ -214,8 +215,8 @@ pub async fn batch_delete_words(
 /// 批量给单词打标签（限定归属该书，只添加）。
 pub async fn batch_tag_words(
     State(state): State<AppState>,
-    Path(book_id): Path<i32>,
-    Json(req): Json<BatchTagWordsReq>,
+    ApiPath(book_id): ApiPath<i32>,
+    ApiJson(req): ApiJson<BatchTagWordsReq>,
 ) -> Result<Json<BatchTagWordsResp>, ApiError> {
     Ok(Json(WordService::batch_tag(&state, book_id, req).await?))
 }

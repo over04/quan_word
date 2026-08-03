@@ -28,6 +28,11 @@ pub fn build(db: DatabaseConnection, api_key: Option<String>) -> Router {
             auth::require_api_key,
         )))
         .fallback(static_handler)
+        // 错误归一：兜底把 4xx/5xx 的纯文本响应转为 JSON（须在压缩层内层，读未压缩 body）
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::common::http::normalize::normalize_error,
+        ))
         // gzip 压缩：客户端 Accept-Encoding: gzip 时对文本/JSON/静态资源生效
         .layer(CompressionLayer::new())
         .with_state(state)

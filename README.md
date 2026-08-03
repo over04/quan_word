@@ -19,6 +19,9 @@
 │   ├── entity/             SeaORM 实体 + Definition（definitions JSON 列模型）
 │   └── migration/          数据库迁移
 ├── frontend/               前端 SPA（src/generated/ 为 ts-rs 生成契约类型）
+├── Dockerfile              多阶段构建：node → rust(musl 静态) → scratch（约 20MB）
+├── docker-compose.yml      一键容器化部署（数据挂载 ./data/）
+├── .dockerignore
 ├── config.example.yaml     运行配置模板（复制为 config.yaml 使用，已 git 忽略）
 └── AGENTS.md               仓库开发约定（开发前必读）
 ```
@@ -79,6 +82,19 @@ cd frontend && npm run build   # tsc -b + vite build
 分页参数：`page`（1 起）、`page_size`（默认 20，上限 100）。错误响应为 `{"error": "中文消息"}`。
 
 ## 部署
+
+### Docker（推荐）
+
+```bash
+docker compose up -d --build   # 构建并启动，访问 http://localhost:3000
+```
+
+- 镜像约 20MB（scratch + musl 静态链接二进制，仅含可执行文件与 CA 证书）
+- 构建缓存：cargo registry 与 target 挂 BuildKit cache mount，依赖未变时改码重建约 1 分钟
+- 数据持久化在 `./data/`（SQLite），可直接 `sqlite3 data/quan_word.db` 查看/备份
+- 自定义配置（auth_key / 切换 PostgreSQL）见 docker-compose.yml 内注释
+
+### 本地构建
 
 ```bash
 cd frontend && npm run build        # 先构建前端

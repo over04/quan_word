@@ -1,0 +1,12 @@
+# 构建上下文排除项（减小传输体积 + 避免把本地密钥/数据库打进镜像）
+.git
+.gitignore
+**/target
+**/node_modules
+data
+*.db
+*.db-wal
+*.db-shm
+config.yaml
+frontend/dist
+docs

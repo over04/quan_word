@@ -47,7 +47,7 @@ crates/server/src/
   business/wordbooks.rs + wordbooks/   /api/wordbooks... (router/service/repo/dto/error)
   business/wordbooks/words.rs + words/ /api/wordbooks/{book_id}/words... (router/service/repo/dto/error/order/sort/sort_dir)
   common/error.rs           ApiError aggregate (HTTP boundary)
-  common/http/              Asset (rust-embed) + spa.rs static handler
+  common/http/              Asset (rust-embed) + spa.rs static handler + json.rs/path.rs (ApiJson/ApiPath 提取器) + normalize.rs (错误归一中间件)
   common/model/page.rs      PageResp<T> pagination model
   common/model/paging.rs    parse_paging shared pagination query parsing
   common/state.rs           AppState (db + wordbooks_cache + shuffle_cache)
@@ -76,6 +76,11 @@ cd frontend && npm run build   # tsc -b + vite build → dist/ (MUST run before 
 
 # Production
 ./target/release/server        # run from project root (reads ./config.yaml; copy from config.example.yaml)
+
+# Docker (Dockerfile: cache mount 持久化 cargo registry/target，依赖未变时改码重建约 1 分钟)
+docker compose up -d --build   # build & start (data in ./data/, port 3000)
+docker compose logs -f         # follow logs
+docker compose down            # stop (./data 保留)
 ```
 
 Verification: clippy gate + `cargo test`; API smoke-tested via curl against a running server (see Testing & QA).
@@ -94,7 +99,8 @@ Verification: clippy gate + `cargo test`; API smoke-tested via curl against a ru
 **Backend patterns:**
 - Services are unit structs (`pub struct WordbookService;`) with associated async fns taking `&AppState` as first arg (access DB via `state.db.as_ref()`); repos are unit structs taking `&DatabaseConnection`.
 - `AppState` holds the DB pool plus two process-memory caches: `wordbooks_cache` (list result, invalidated via `state.invalidate_wordbooks()` by wordbook CRUD + word create/delete) and `shuffle_cache` ((book_id, seed) → shuffled id sequence, cap `SHUFFLE_CACHE_CAP`, cleared on word create/delete). Locks are `parking_lot::Mutex`, never held across `.await`.
-- Handlers return `Result<impl IntoResponse, ApiError>`; `?` converts domain errors and `DbErr` via `From`. `ApiError` maps NotFound/BadRequest/Db to 400/404/500 with user-facing Chinese messages.
+- Handlers return `Result<impl IntoResponse, ApiError>`; `?` converts domain errors and `DbErr` via `From`. `ApiError` maps NotFound/BadRequest/Unauthorized/Db to 404/400/401/500 with user-facing Chinese messages; 500 responses never leak internals (Db details only go to the log).
+- **Error response spec (enforced):** every error response is `{"error": 中文消息}` JSON. Request-body extraction MUST use `ApiJson<T>` (`common/http/json.rs`) and path params MUST use `ApiPath<T>` (`common/http/path.rs`) — axum 0.8 handler extraction failures short-circuit via `rejection.into_response()` and never call `From<Rejection>`, so raw `Json`/`Path` extractors produce English plain-text/422 responses; `ApiJson`/`ApiPath` have `Rejection = ApiError` (400, Chinese). `Query` DTO fields stay `String`-typed (no rejection possible). Framework-level plain-text responses (405 Method Not Allowed, uncaught 500) are wrapped into JSON by the `common/http/normalize.rs` middleware (mounted inside the compression layer in `router.rs`).
 - Validation returns domain errors whose `thiserror` text is user-facing Chinese.
 - SeaORM: `Entity::find().filter(Column::X.eq(v)).order_by_asc(...).paginate(db, size)`, then `fetch_page(page - 1)` (**0-based offset**) + `num_items()`; API pages are 1-based. `total_pages = total.div_ceil(page_size)`.
 - SQLite: `init/db.rs` sets `journal_mode=WAL`, `synchronous=NORMAL`, `busy_timeout=5000`, `cache_size=-20000` after connect.
@@ -116,7 +122,9 @@ Verification: clippy gate + `cargo test`; API smoke-tested via curl against a ru
 | `crates/server/src/router.rs` | Top-level route aggregation; add new top-level domains here (domain routes live in each domain's router.rs) |
 | `crates/server/src/business/wordbooks/words/service.rs` | Pagination, validation, seeded shuffle, JSON conversion |
 | `crates/server/src/business/wordbooks/words/order.rs` | WordOrder enum + query param parsing (13 POS whitelist in service validate) |
-| `crates/server/src/common/http/asset.rs` | rust-embed folder `../../frontend/dist/` — must exist at compile time (keep `.gitkeep`) |
+|`crates/server/src/common/http/asset.rs` | rust-embed folder `../../frontend/dist/` — must exist at compile time (keep `.gitkeep`) |
+|`Dockerfile` | Multi-stage: node → `rust:1.96-alpine` (musl static) → scratch; `--mount=type=cache` persists cargo registry/target |
+|`docker-compose.yml` | `./data` bind mount (SQLite inspectable), port, PG-switch comment template |
 | `.cargo/config.toml` | `TS_RS_EXPORT_DIR` for ts-rs generated contract output |
 | `frontend/src/components/PaperBookView.tsx` | Core paper-book UI: ruled grid, tap-to-cover, gesture/zone/keyboard page turns |
 | `frontend/src/index.css` | Design tokens (`@theme`), keyframes, texture overlays |
