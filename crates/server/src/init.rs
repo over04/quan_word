@@ -20,7 +20,7 @@ pub async fn run() -> Result<()> {
     let db = db::init_db(&cfg.database.url).await?;
     tracing::info!("数据库迁移完成");
 
-    let app = router::build(db, cfg.server.auth_key.clone());
+    let app = router::build(db, cfg.server.auth_key.clone(), cfg.clone());
     let addr = format!("{}:{}", cfg.server.host, cfg.server.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("服务已启动: http://{addr}");

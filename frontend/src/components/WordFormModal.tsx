@@ -18,10 +18,15 @@ interface Props {
 const inputClass =
   'w-full px-4 py-2.5 rounded-xl bg-white border border-charcoal/15 text-charcoal text-sm placeholder:text-charcoal/30 focus:border-clay focus:outline-none transition-colors'
 
-/** 词性枚举：下拉选择，防止手输错误 */
+/** 词性枚举：下拉选择，防止手输错误；C 可数 / U 不可数（名词），vt./vi. 及物/不及物（动词） */
 const POS_OPTIONS = [
   'n.',
+  'C',
+  'U',
+  'CU',
   'v.',
+  'vt.',
+  'vi.',
   'adj.',
   'adv.',
   'prep.',
@@ -131,6 +136,9 @@ export default function WordFormModal({ bookId, initial, onClose, onSaved, tags,
                     <option value="" disabled hidden>
                       词性
                     </option>
+                    {d.pos && !POS_OPTIONS.includes(d.pos) && (
+                      <option value={d.pos}>{d.pos}</option>
+                    )}
                     {POS_OPTIONS.map((p) => (
                       <option key={p} value={p}>
                         {p}

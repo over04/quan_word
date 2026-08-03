@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
 
 use parking_lot::Mutex;
 use sea_orm::DatabaseConnection;
 
 use crate::business::wordbooks::dto::resp::WordbookResp;
+use crate::config::Config;
 
 /// 洗牌序列缓存上限（条）：超出后整体清空，避免缓存无限增长。
 pub const SHUFFLE_CACHE_CAP: usize = 8;
@@ -12,6 +14,16 @@ pub const SHUFFLE_CACHE_CAP: usize = 8;
 /// random 打乱序列缓存条目：(book_id, 筛选标签 ids, seed) → 洗牌后的完整 id 序列
 /// （tag_ids 已排序去重；空 = 不筛选）
 type ShuffleCache = Arc<Mutex<HashMap<(i32, Vec<i32>, String), Vec<i32>>>>;
+
+/// 导入预览会话条目：token → (book_id, 行数据 JSON 载荷)。
+/// rows 为 `Vec<ImportRowData>` 的 serde_json 编码；common 不依赖 business DTO，故用载荷。
+pub struct ImportCacheEntry {
+    pub book_id: i32,
+    pub rows: Arc<[u8]>,
+    pub created_at: Instant,
+}
+
+pub type ImportCache = Arc<Mutex<HashMap<String, ImportCacheEntry>>>;
 
 /// 全局应用状态：共享数据库连接池 + 进程内存缓存。
 ///
@@ -24,11 +36,30 @@ pub struct AppState {
     /// 单词书列表缓存（含 word_count）；None = 未缓存
     pub wordbooks_cache: Arc<Mutex<Option<Arc<Vec<WordbookResp>>>>>,
     pub shuffle_cache: ShuffleCache,
+    /// 导入预览会话缓存：token → 解析结果（TTL/容量由 config.import 控制）
+    pub import_cache: ImportCache,
+    /// 应用配置（含 import 段的 TTL/容量/行数上限）
+    pub config: Config,
 }
 
 impl AppState {
     /// 失效单词书列表缓存：单词书增删改、单词增删（影响 word_count）后调用。
     pub fn invalidate_wordbooks(&self) {
         *self.wordbooks_cache.lock() = None;
+    }
+
+    /// 启动导入预览会话的后台清理：按配置间隔清除过期条目。
+    /// 服务启动时调用一次；任务随进程结束而终止（幂等：调用方保证只调一次）。
+    pub fn spawn_import_cache_cleaner(&self) {
+        let cache = Arc::clone(&self.import_cache);
+        let interval = std::time::Duration::from_secs(self.config.import.cache_cleanup_secs);
+        let ttl = std::time::Duration::from_secs(self.config.import.cache_ttl_secs);
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            loop {
+                ticker.tick().await;
+                cache.lock().retain(|_, e| e.created_at.elapsed() < ttl);
+            }
+        });
     }
 }

@@ -1,18 +1,23 @@
 //! 应用配置：YAML 加载与启动期校验。
 
 mod database;
+mod import;
 mod server;
 
 use anyhow::{Context, Result};
 
 use self::database::DatabaseConfig;
+use self::import::ImportConfig;
 use self::server::ServerConfig;
 
-/// 应用配置：server 监听地址 + 数据库连接。
-#[derive(Debug, Clone, serde::Deserialize)]
+/// 应用配置：server 监听地址 + 数据库连接 + 批量导入。
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct Config {
     pub server: ServerConfig,
     pub database: DatabaseConfig,
+    /// 批量导入：解析上限与预览会话缓存生命周期
+    #[serde(default)]
+    pub import: ImportConfig,
 }
 
 impl Config {
@@ -24,12 +29,16 @@ impl Config {
             std::env::var("QUAN_WORD_CONFIG").unwrap_or_else(|_| "./config.yaml".to_string());
         match std::fs::read_to_string(&path) {
             Ok(content) => {
-                serde_yml::from_str(&content).with_context(|| format!("解析配置失败: {path}"))
+                let cfg: Config = serde_yml::from_str(&content)
+                    .with_context(|| format!("解析配置失败: {path}"))?;
+                if cfg.import.cache_ttl_secs == 0 || cfg.import.cache_cleanup_secs == 0 {
+                    anyhow::bail!(
+                        "配置错误: import.cache_ttl_secs 与 import.cache_cleanup_secs 必须大于 0"
+                    );
+                }
+                Ok(cfg)
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config {
-                server: ServerConfig::default(),
-                database: DatabaseConfig::default(),
-            }),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
             Err(e) => Err(e).with_context(|| format!("读取配置失败: {path}")),
         }
     }

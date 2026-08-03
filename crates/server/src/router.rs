@@ -10,16 +10,21 @@ use crate::business::wordbooks;
 use crate::common::auth;
 use crate::common::http::spa::static_handler;
 use crate::common::state::AppState;
+use crate::config::Config;
 
 /// 组装全部路由：聚合各业务域路由（域内递归聚合）+ SPA 静态托管（fallback）。
 /// `api_key` 为 config server.auth_key；非 None 时所有 /api 请求需携带密钥。
-pub fn build(db: DatabaseConnection, api_key: Option<String>) -> Router {
+/// 同时启动导入预览会话的后台清理任务（随进程结束而终止）。
+pub fn build(db: DatabaseConnection, api_key: Option<String>, config: Config) -> Router {
     let state = AppState {
         db: Arc::new(db),
         api_key: api_key.map(Arc::from),
         wordbooks_cache: Arc::new(Mutex::new(None)),
         shuffle_cache: Arc::new(Mutex::new(HashMap::new())),
+        import_cache: Arc::new(Mutex::new(HashMap::new())),
+        config,
     };
+    state.spawn_import_cache_cleaner();
     // api 路由挂鉴权层（静态资源不设防，前端 401 时引导输入密钥）
     let api = Router::new().merge(wordbooks::router::router());
     Router::new()

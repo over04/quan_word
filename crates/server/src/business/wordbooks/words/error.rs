@@ -17,7 +17,7 @@ pub enum WordError {
     EmptyDefinitions,
     #[error("释义内容不能为空")]
     EmptyMeaning,
-    #[error("词性不合法: {pos}，可选：n. / v. / adj. / adv. / prep. / conj. / pron. / num. / art. / interj. / aux. / abbr. / phr. 或留空")]
+    #[error("词性不合法: {pos}，可选：n. / c / C / u / U / cu / CU / v. / vt. / vi. / adj. / adv. / prep. / conj. / pron. / num. / art. / interj. / aux. / abbr. / phr. 或留空")]
     InvalidPos { pos: String },
     #[error("不支持的排序: {order}")]
     InvalidOrder { order: String },
@@ -39,6 +39,10 @@ pub enum WordError {
     EmptySelection,
     #[error("不支持的文件格式: {ext}，仅支持 csv / xlsx / xls / ods")]
     UnsupportedFormat { ext: String },
+    #[error("导入会话无效或已过期，请重新上传文件预览")]
+    ImportSessionInvalid,
+    #[error("不支持的导入筛选: {filter}，可选：all / error / duplicate")]
+    InvalidImportFilter { filter: String },
     #[error("导入失败：共 {count} 行有误\n{details}")]
     ImportFailed { count: usize, details: String },
     #[error("导入行数超过上限（{limit} 行）")]

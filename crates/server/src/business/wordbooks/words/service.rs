@@ -1,4 +1,6 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use chrono::Utc;
 use entity::definition::Definition;
@@ -9,7 +11,10 @@ use super::dto::batch::BatchDeleteWordsResp;
 use super::dto::batch_tag::BatchTagWordsReq;
 use super::dto::batch_tag::BatchTagWordsResp;
 use super::dto::create::CreateWordReq;
-use super::dto::import::ImportResp;
+use super::dto::import::{
+    ImportExecReq, ImportPreviewResp, ImportResp, ImportRowData, ImportRowView, ImportRowsReq,
+    ImportRowsResp,
+};
 use super::dto::resp::WordResp;
 use super::dto::update::UpdateWordReq;
 use super::dto::update_tags::UpdateWordTagsReq;
@@ -20,7 +25,29 @@ use super::repo::WordRepo;
 use super::sort::SortField;
 use super::sort_dir::SortDir;
 use crate::common::model::page::PageResp;
-use crate::common::state::{AppState, SHUFFLE_CACHE_CAP};
+use crate::common::state::{AppState, ImportCacheEntry, SHUFFLE_CACHE_CAP};
+
+/// 导入会话 token 序号（与纳秒时间戳拼合防碰撞；token 非安全边界，仅会话凭据）。
+static IMPORT_TOKEN_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// 生成导入预览会话 token。
+fn new_import_token() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("系统时间应晚于 1970")
+        .as_nanos();
+    let seq = IMPORT_TOKEN_SEQ.fetch_add(1, Ordering::Relaxed);
+    format!("{nanos:x}-{seq:x}")
+}
+
+/// 导入解析中间结果（预览与执行共用）。
+struct ImportPlan {
+    groups: Vec<import::WordGroup>,     // 按拼写合并后的单词
+    errors: Vec<(usize, String)>,       // 行错误（行号升序）
+    new_tags: Vec<String>,              // 缺失标签名（跨组去重，保持出现顺序）
+    existing_tags: u64,
+    duplicates: Vec<(usize, String)>,   // 重复组（组首行行号, 拼写）
+}
 
 /// 单词业务逻辑：分页查询（含排序/打乱）/ 搜索查询 / 创建 / 更新 / 删除。
 pub struct WordService;
@@ -221,44 +248,376 @@ impl WordService {
         Ok(())
     }
 
-    /// 批量导入：解析模板文件 → 逐行校验 → 事务插入。原子性：任一行失败整体不导入。
-    pub async fn import_words(
+    /// 解析行数据并构建导入计划：行级校验分类 → 按拼写分组 → 标签差异、重复判定（预览与执行共用）。
+    async fn build_import_plan(
+        state: &AppState,
+        book_id: i32,
+        rows: &[import::RowData],
+    ) -> Result<ImportPlan, WordError> {
+        let db = state.db.as_ref();
+        let (prepared, errors) = import::prepare_rows(rows);
+        let groups = import::group_rows(&prepared);
+        let tag_map = WordRepo::find_tag_map(db, book_id).await?;
+        // 文件标签名全集（跨组去重，保持出现顺序）
+        let mut all: Vec<String> = Vec::new();
+        for g in &groups {
+            for name in &g.tag_names {
+                if !all.contains(name) {
+                    all.push(name.clone());
+                }
+            }
+        }
+        let mut new_tags = Vec::new();
+        let mut existing_tags = 0u64;
+        for name in all {
+            if tag_map.contains_key(&name) {
+                existing_tags += 1;
+            } else {
+                new_tags.push(name);
+            }
+        }
+        let spellings = WordRepo::find_spellings(db, book_id).await?;
+        let mut duplicates = Vec::new();
+        for g in &groups {
+            if spellings.contains_key(&g.spelling.to_lowercase()) {
+                duplicates.push((g.row_nos[0], g.spelling.clone()));
+            }
+        }
+        Ok(ImportPlan {
+            groups,
+            errors,
+            new_tags,
+            existing_tags,
+            duplicates,
+        })
+    }
+
+    /// 批量导入预览：解析文件 → 缓存会话 → 返回统计 + 第一页行视图（不落库）。
+    pub async fn import_preview(
         state: &AppState,
         book_id: i32,
         file_name: &str,
         bytes: Vec<u8>,
-    ) -> Result<ImportResp, WordError> {
+        page: u64,
+        page_size: u64,
+    ) -> Result<ImportPreviewResp, WordError> {
         let db = state.db.as_ref();
         Self::ensure_book_exists(db, book_id).await?;
+        let page = page.max(1);
+        let page_size = page_size.clamp(1, 100);
         let ext = std::path::Path::new(file_name)
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or_default()
             .to_string();
-        let rows = import::parse_file(&bytes, &ext)?;
-        let reqs = import::to_create_reqs(&rows).map_err(Self::format_import_errors)?;
-        if reqs.is_empty() {
-            return Ok(ImportResp { imported: 0 });
+        let rows = import::parse_file(&bytes, &ext, state.config.import.max_rows)?;
+        let (views, total, invalid, dup_total, dup_groups, new_tags, existing_tags) =
+            Self::build_views(state, book_id, &rows).await?;
+        let (page_rows, total_pages) = Self::page_groups(views, page, page_size);
+        let token = new_import_token();
+        // 缓存全部解析行（含全空行，行号 = 索引 + 2；updates 映射依赖此不变量）
+        let dto_rows: Vec<ImportRowData> = rows.iter().map(|r| r.to_dto()).collect();
+        let mut m = state.import_cache.lock();
+        m.retain(|_, e| {
+            e.created_at
+                .elapsed()
+                < Duration::from_secs(state.config.import.cache_ttl_secs)
+        });
+        if m.len() >= state.config.import.cache_cap {
+            m.clear();
         }
-        let now = Utc::now();
-        let mut models = Vec::with_capacity(reqs.len());
-        for req in reqs {
-            models.push(word::ActiveModel {
-                wordbook_id: Set(book_id),
-                spelling: Set(req.spelling),
-                phonetic: Set(req.phonetic),
-                definitions: Set(serde_json::to_value(req.definitions)?),
-                example: Set(req.example),
-                created_at: Set(now),
-                updated_at: Set(now),
-                ..Default::default()
+        m.insert(
+            token.clone(),
+            ImportCacheEntry {
+                book_id,
+                rows: serde_json::to_vec(&dto_rows)?.into(),
+                created_at: Instant::now(),
+            },
+        );
+        drop(m);
+        Ok(ImportPreviewResp {
+            token,
+            total_rows: total,
+            valid_rows: total - invalid,
+            invalid_rows: invalid,
+            duplicate_total: dup_total,
+            duplicate_groups: dup_groups,
+            rows: page_rows,
+            new_tags,
+            existing_tags,
+            page,
+            page_size,
+            total_pages,
+        })
+    }
+
+    /// 构建全量行视图与统计（预览与重新校验共用；不落库、不建会话）。
+    #[allow(clippy::type_complexity)]
+    async fn build_views(
+        state: &AppState,
+        book_id: i32,
+        rows: &[import::RowData],
+    ) -> Result<
+        (
+            Vec<ImportRowView>,
+            u64,
+            u64,
+            u64,
+            Vec<u64>,
+            Vec<String>,
+            u64,
+        ),
+        WordError,
+    > {
+        let plan = Self::build_import_plan(state, book_id, rows).await?;
+        let err_map: HashMap<usize, String> = plan.errors.into_iter().collect();
+        let dup_first: HashSet<usize> = plan.duplicates.iter().map(|(r, _)| *r).collect();
+        let dup_groups: Vec<u64> = plan
+            .duplicates
+            .iter()
+            .map(|(r, _)| *r as u64)
+            .collect();
+        let mut group_map: HashMap<usize, usize> = HashMap::new(); // 行号 → 组首行号
+        for g in &plan.groups {
+            let first = g.row_nos[0];
+            for &rn in &g.row_nos {
+                group_map.insert(rn, first);
+            }
+        }
+        let mut views = Vec::new();
+        for raw in rows {
+            if raw.is_blank() {
+                continue;
+            }
+            let row_no = raw.row_no;
+            let group_first = group_map.get(&row_no).copied().unwrap_or(row_no);
+            views.push(ImportRowView {
+                row: row_no as u64,
+                spelling: raw.spelling.clone(),
+                phonetic: raw.phonetic.clone(),
+                pos: raw.pos.clone(),
+                meaning: raw.meaning.clone(),
+                example: raw.example.clone(),
+                tags: raw.tags.clone(),
+                error: err_map.get(&row_no).cloned(),
+                is_duplicate: dup_first.contains(&group_first),
+                group: group_first as u64,
             });
         }
-        let imported = WordRepo::insert_many(db, models).await?;
+        let total = views.len() as u64;
+        let invalid = err_map.len() as u64;
+        Ok((
+            views,
+            total,
+            invalid,
+            dup_first.len() as u64,
+            dup_groups,
+            plan.new_tags,
+            plan.existing_tags,
+        ))
+    }
+
+    /// 按组切片（组不跨页，页序 = 组序）：返回（当前页展开行, 总页数）。
+    fn page_groups(views: Vec<ImportRowView>, page: u64, page_size: u64) -> (Vec<ImportRowView>, u64) {
+        let mut group_idx: HashMap<u64, usize> = HashMap::new();
+        let mut groups: Vec<Vec<ImportRowView>> = Vec::new();
+        for v in views {
+            if let Some(&i) = group_idx.get(&v.group) {
+                groups[i].push(v);
+            } else {
+                group_idx.insert(v.group, groups.len());
+                groups.push(vec![v]);
+            }
+        }
+        let total_pages = (groups.len() as u64).div_ceil(page_size);
+        let start = ((page - 1) * page_size) as usize;
+        let page_rows: Vec<ImportRowView> = groups
+            .iter()
+            .skip(start)
+            .take(page_size as usize)
+            .flatten()
+            .cloned()
+            .collect();
+        (page_rows, total_pages)
+    }
+
+    /// 行分页/编辑/筛选：会话内应用行级修正 → 重新校验 → 按筛选分页返回（不消费会话）。
+    pub async fn page_rows(
+        state: &AppState,
+        book_id: i32,
+        req: ImportRowsReq,
+    ) -> Result<ImportRowsResp, WordError> {
+        Self::ensure_book_exists(state.db.as_ref(), book_id).await?;
+        let page = req.page.max(1);
+        let page_size = req.page_size.clamp(1, 100);
+        let ttl = Duration::from_secs(state.config.import.cache_ttl_secs);
+        // 会话内更新行数据（不消费会话；编辑/翻页/筛选复用同一 token）。
+        // 锁与借用限定在块内，保证不跨 await（parking_lot guard 非 Send）。
+        let dto_rows: Vec<ImportRowData> = {
+            let mut m = state.import_cache.lock();
+            let entry = match m.get_mut(&req.token) {
+                Some(e) if e.book_id == book_id && e.created_at.elapsed() < ttl => e,
+                _ => return Err(WordError::ImportSessionInvalid),
+            };
+            let mut dto_rows: Vec<ImportRowData> = serde_json::from_slice(&entry.rows)?;
+            for fix in &req.updates {
+                // 行号 < 2 不可能指向数据行，显式忽略（防 usize 减法下溢 panic）
+                if fix.row < 2 {
+                    continue;
+                }
+                let idx = fix.row as usize - 2;
+                if let Some(r) = dto_rows.get_mut(idx) {
+                    *r = fix.clone();
+                }
+            }
+            entry.rows = serde_json::to_vec(&dto_rows)?.into();
+            dto_rows
+        };
+        let rows: Vec<import::RowData> = dto_rows.iter().map(import::RowData::from_dto).collect();
+        let (views, total, invalid, dup_total, dup_groups, new_tags, existing_tags) =
+            Self::build_views(state, book_id, &rows).await?;
+        let filtered: Vec<ImportRowView> = match req.filter.as_str() {
+            "all" => views,
+            "error" => views.into_iter().filter(|r| r.error.is_some()).collect(),
+            "duplicate" => views.into_iter().filter(|r| r.is_duplicate).collect(),
+            other => {
+                return Err(WordError::InvalidImportFilter {
+                    filter: other.into(),
+                });
+            }
+        };
+        // 按组切片：组不跨页（前端按组卡片展示），页序 = 组序
+        let (page_rows, total_pages) = Self::page_groups(filtered, page, page_size);
+        Ok(ImportRowsResp {
+            total_rows: total,
+            valid_rows: total - invalid,
+            invalid_rows: invalid,
+            duplicate_total: dup_total,
+            duplicate_groups: dup_groups,
+            rows: page_rows,
+            new_tags,
+            existing_tags,
+            page,
+            page_size,
+            total_pages,
+        })
+    }
+
+    /// 批量导入执行：取预览会话 → 应用修正 → 重新校验 → 事务落库（容错：错误行跳过）。
+    pub async fn import_words(
+        state: &AppState,
+        book_id: i32,
+        req: ImportExecReq,
+    ) -> Result<ImportResp, WordError> {
+        let db = state.db.as_ref();
+        Self::ensure_book_exists(db, book_id).await?;
+        let ttl = Duration::from_secs(state.config.import.cache_ttl_secs);
+        // 一次性消费会话（不存在/过期/跨书统一报错，不泄露差异）
+        let entry = {
+            let mut m = state.import_cache.lock();
+            m.remove(&req.token)
+        };
+        let entry = match entry {
+            Some(e) if e.book_id == book_id && e.created_at.elapsed() < ttl => e,
+            _ => return Err(WordError::ImportSessionInvalid),
+        };
+        let dto_rows: Vec<ImportRowData> = serde_json::from_slice(&entry.rows)?;
+        let rows: Vec<import::RowData> = dto_rows
+            .iter()
+            .map(import::RowData::from_dto)
+            .collect();
+        let plan = Self::build_import_plan(state, book_id, &rows).await?;
+        if plan.groups.is_empty() {
+            return Ok(ImportResp {
+                imported: 0,
+                updated: 0,
+                skipped_errors: plan.errors.len() as u64,
+                skipped_duplicates: 0,
+                created_tags: 0,
+            });
+        }
+        // 标签：缺失名批量创建（已存在的复用；过滤预览后并发创建的，避免撞 UNIQUE 约束）
+        let mut tag_map = WordRepo::find_tag_map(db, book_id).await?;
+        let to_create: Vec<String> = plan
+            .new_tags
+            .iter()
+            .filter(|n| !tag_map.contains_key(*n))
+            .cloned()
+            .collect();
+        tag_map.extend(WordRepo::insert_tags(db, book_id, &to_create).await?);
+        // 重复判定以执行时最新数据为准
+        let spellings = WordRepo::find_spellings(db, book_id).await?;
+        let now = Utc::now();
+        let update_set: HashSet<usize> = req.update_rows.iter().map(|r| *r as usize).collect();
+        let mut inserts: Vec<(word::ActiveModel, Vec<i32>)> = Vec::new();
+        let mut update_targets: Vec<(usize, i32, Vec<i32>)> = Vec::new(); // (组首行号, existing_id, file_tag_ids)
+        let mut dup_total = 0u64; // 执行时的重复组总数（更新 + 跳过）
+        for group in &plan.groups {
+            let tag_ids: Vec<i32> = group
+                .tag_names
+                .iter()
+                .map(|n| *tag_map.get(n).expect("标签映射应完整"))
+                .collect();
+            if let Some(existing_id) = spellings.get(&group.spelling.to_lowercase()) {
+                dup_total += 1;
+                // 组内任一行被勾选「更新」→ 整组更新
+                if group.row_nos.iter().any(|rn| update_set.contains(rn)) {
+                    update_targets.push((group.row_nos[0], *existing_id, tag_ids));
+                }
+            } else {
+                inserts.push((
+                    word::ActiveModel {
+                        wordbook_id: Set(book_id),
+                        spelling: Set(group.spelling.clone()),
+                        phonetic: Set(group.phonetic.clone()),
+                        definitions: Set(serde_json::to_value(&group.definitions)?),
+                        example: Set(group.example.clone()),
+                        created_at: Set(now),
+                        updated_at: Set(now),
+                        ..Default::default()
+                    },
+                    tag_ids,
+                ));
+            }
+        }
+        // 现有标签（合并用）：一次查询全部更新目标，避免 N+1
+        let dup_word_ids: Vec<i32> = update_targets.iter().map(|(_, id, _)| *id).collect();
+        let existing_links = WordRepo::find_tag_ids_by_word_ids(db, &dup_word_ids).await?;
+        let mut updates: Vec<(word::ActiveModel, Vec<i32>)> =
+            Vec::with_capacity(update_targets.len());
+        for (first_row, word_id, file_tag_ids) in update_targets {
+            let group = plan
+                .groups
+                .iter()
+                .find(|g| g.row_nos[0] == first_row)
+                .expect("组首行号来自 plan.groups");
+            // 标签合并：现有 ∪ 文件，去重升序
+            let mut merged = existing_links.get(&word_id).cloned().unwrap_or_default();
+            merged.extend(file_tag_ids);
+            merged.sort_unstable();
+            merged.dedup();
+            let existing = WordRepo::find_by_id(db, word_id)
+                .await?
+                .ok_or(WordError::WordNotFound { word_id })?;
+            let mut model: word::ActiveModel = existing.into();
+            model.spelling = Set(group.spelling.clone());
+            model.phonetic = Set(group.phonetic.clone());
+            model.definitions = Set(serde_json::to_value(&group.definitions)?);
+            model.example = Set(group.example.clone());
+            model.updated_at = Set(now);
+            updates.push((model, merged));
+        }
+        WordRepo::import_inserts(db, &inserts, &updates).await?;
         // 新词影响列表页 word_count 与洗牌 id 集合：两个缓存都失效
         state.invalidate_wordbooks();
         state.shuffle_cache.lock().clear();
-        Ok(ImportResp { imported })
+        Ok(ImportResp {
+            imported: inserts.len() as u64,
+            updated: updates.len() as u64,
+            skipped_errors: plan.errors.len() as u64,
+            skipped_duplicates: dup_total - updates.len() as u64,
+            created_tags: plan.new_tags.len() as u64,
+        })
     }
 
     /// 批量删除（校验归属该书）；返回实际删除数。
@@ -375,7 +734,7 @@ impl WordService {
             .set_font_color("FFFFFF");
         let mut sheet = Worksheet::new();
         sheet.set_name("单词模板").map_err(err)?;
-        for (col, width) in [(0u16, 20.0), (1, 20.0), (2, 10.0), (3, 40.0), (4, 40.0)] {
+        for (col, width) in [(0u16, 20.0), (1, 20.0), (2, 10.0), (3, 40.0), (4, 40.0), (5, 20.0)] {
             sheet.set_column_width(col, width).map_err(err)?;
         }
         sheet.set_row_height(0, 22.0).map_err(err)?;
@@ -390,38 +749,20 @@ impl WordService {
         info.set_name("说明").map_err(err)?;
         let lines = [
             "导入说明",
-            "1. 第一行为表头，请勿修改；从第二行开始填写，每行一个单词。",
-            "2. 释义列支持多个义项，用中文分号（；）或英文分号（;）分隔。",
-            "3. 义项可直接写词性前缀（如 n. 放弃），也可在词性列统一填写。",
-            "4. 词性可选：n. v. adj. adv. prep. conj. pron. num. art. interj. aux. abbr. phr.",
-            "5. 音标、例句可留空。",
+            "1. 第一行为表头，请勿修改；从第二行开始填写，每行一个义项（一个词性对应一个释义）。",
+            "2. 同一单词的多个义项写多行（单词列重复填写），导入时自动合并为一个单词。",
+            "3. 词性列填写该义项词性（如 n.），释义列填写对应释义；名词可分可数 C / 不可数 U / 两者 CU（小写 c / u / cu 同样接受），动词分及物 vt. / 不及物 vi.；完整可选：n. / c / C / u / U / cu / CU / v. / vt. / vi. / adj. / adv. / prep. / conj. / pron. / num. / art. / interj. / aux. / abbr. / phr.，可留空。",
+            "4. 音标、例句、标签可留空；同一单词多行时音标/例句取首个非空，标签取并集。",
+            "5. 标签列多个标签用分号（；）或英文分号（;）分隔；该书不存在的标签导入时自动创建。",
             "6. 保存为 .xlsx / .xls / .ods / .csv 后上传导入（WPS 请另存为 .xlsx 或 .csv）。",
+            "7. 同书已存在相同拼写的单词：默认以模板内容更新该词并合并标签；可在导入预览中改为跳过。",
+            "8. 上传后先预览：错误行可在预览中直接修改，确认后导入；有误的行会跳过并提示行号。",
         ];
         for (i, line) in lines.iter().enumerate() {
             info.write_string(i as u32, 0, *line).map_err(err)?;
         }
         wb.push_worksheet(info);
         wb.save_to_buffer().map_err(err)
-    }
-
-    /// 导入失败明细拼装：每行 `第 N 行：消息`，最多 20 条，超出追加总数。
-    fn format_import_errors(errors: Vec<(usize, String)>) -> WordError {
-        const MAX_DETAILS: usize = 20;
-        let total = errors.len();
-        let mut details = String::new();
-        for (i, (row, msg)) in errors.iter().take(MAX_DETAILS).enumerate() {
-            if i > 0 {
-                details.push('\n');
-            }
-            details.push_str(&format!("第 {row} 行：{msg}"));
-        }
-        if total > MAX_DETAILS {
-            details.push_str(&format!("\n…共 {total} 行有误"));
-        }
-        WordError::ImportFailed {
-            count: total,
-            details,
-        }
     }
 
     async fn ensure_book_exists(db: &DatabaseConnection, book_id: i32) -> Result<(), WordError> {
@@ -525,9 +866,9 @@ impl WordService {
             return Err(WordError::EmptyMeaning);
         }
         // 词性必须是合法枚举（与前端下拉一致）或为空
-        const VALID_POS: [&str; 13] = [
-            "n.", "v.", "adj.", "adv.", "prep.", "conj.", "pron.", "num.", "art.", "interj.",
-            "aux.", "abbr.", "phr.",
+        const VALID_POS: [&str; 21] = [
+            "n.", "c", "C", "u", "U", "cu", "CU", "v.", "vt.", "vi.", "adj.", "adv.",
+            "prep.", "conj.", "pron.", "num.", "art.", "interj.", "aux.", "abbr.", "phr.",
         ];
         if let Some(bad) = definitions
             .iter()

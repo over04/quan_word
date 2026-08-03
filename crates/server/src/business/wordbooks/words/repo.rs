@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use chrono::Utc;
 use entity::{tag, word, word_tag, wordbook};
 use sea_orm::sea_query::{Condition, Expr, ExprTrait, Query};
 use sea_orm::{
@@ -250,16 +251,89 @@ impl WordRepo {
         Ok(word::Entity::delete_by_id(id).exec(db).await?.rows_affected)
     }
 
-    /// 批量插入（事务）：任一步失败整体回滚；返回插入行数。
-    pub async fn insert_many(
+    /// 该书全部标签名 → id 映射。
+    pub async fn find_tag_map(
         db: &DatabaseConnection,
-        models: Vec<word::ActiveModel>,
-    ) -> Result<u64, sea_orm::DbErr> {
-        let n = models.len() as u64;
+        book_id: i32,
+    ) -> Result<HashMap<String, i32>, sea_orm::DbErr> {
+        Ok(tag::Entity::find()
+            .filter(tag::Column::WordbookId.eq(book_id))
+            .all(db)
+            .await?
+            .into_iter()
+            .map(|t| (t.name, t.id))
+            .collect())
+    }
+
+    /// 该书全部单词拼写（trim + 小写）→ id 映射（导入重复判定用）。
+    /// 同拼写多词时保留最早（id 最小）的，保证更新目标确定性。
+    pub async fn find_spellings(
+        db: &DatabaseConnection,
+        book_id: i32,
+    ) -> Result<HashMap<String, i32>, sea_orm::DbErr> {
+        let mut map = HashMap::new();
+        for w in word::Entity::find()
+            .filter(word::Column::WordbookId.eq(book_id))
+            .order_by_asc(word::Column::Id)
+            .all(db)
+            .await?
+        {
+            map.entry(w.spelling.trim().to_lowercase()).or_insert(w.id);
+        }
+        Ok(map)
+    }
+
+    /// 批量创建标签（names 已去重校验）；返回 name → id（含全部传入项）。
+    pub async fn insert_tags(
+        db: &DatabaseConnection,
+        book_id: i32,
+        names: &[String],
+    ) -> Result<HashMap<String, i32>, sea_orm::DbErr> {
+        let mut map = HashMap::with_capacity(names.len());
+        if names.is_empty() {
+            return Ok(map);
+        }
+        let now = Utc::now();
         let txn = db.begin().await?;
-        word::Entity::insert_many(models).exec(&txn).await?;
+        for name in names {
+            let model = tag::ActiveModel {
+                wordbook_id: Set(book_id),
+                name: Set(name.clone()),
+                created_at: Set(now),
+                ..Default::default()
+            };
+            let saved = model.insert(&txn).await?;
+            map.insert(saved.name, saved.id);
+        }
         txn.commit().await?;
-        Ok(n)
+        Ok(map)
+    }
+
+    /// 事务执行导入落库：插入新词 + 更新重复词 + 写标签关联；任一步失败整体回滚。
+    /// inserts: (word model, tag_ids)；updates: (word model, 合并后的 tag_ids 全集)。
+    pub async fn import_inserts(
+        db: &DatabaseConnection,
+        inserts: &[(word::ActiveModel, Vec<i32>)],
+        updates: &[(word::ActiveModel, Vec<i32>)],
+    ) -> Result<(), sea_orm::DbErr> {
+        if inserts.is_empty() && updates.is_empty() {
+            return Ok(());
+        }
+        let txn = db.begin().await?;
+        for (model, tag_ids) in inserts {
+            let saved = model.clone().insert(&txn).await?;
+            Self::insert_tag_links(&txn, saved.id, tag_ids).await?;
+        }
+        for (model, tag_ids) in updates {
+            let saved = model.clone().update(&txn).await?;
+            word_tag::Entity::delete_many()
+                .filter(word_tag::Column::WordId.eq(saved.id))
+                .exec(&txn)
+                .await?;
+            Self::insert_tag_links(&txn, saved.id, tag_ids).await?;
+        }
+        txn.commit().await?;
+        Ok(())
     }
 
     /// 批量删除（限定单词书归属）；返回受影响行数。

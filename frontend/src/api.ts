@@ -7,7 +7,13 @@ import type { CreateTagReq } from './generated/CreateTagReq'
 import type { CreateWordReq } from './generated/CreateWordReq'
 import type { CreateWordbookReq } from './generated/CreateWordbookReq'
 import type { Definition } from './generated/Definition'
+import type { ImportExecReq } from './generated/ImportExecReq'
+import type { ImportPreviewResp } from './generated/ImportPreviewResp'
 import type { ImportResp } from './generated/ImportResp'
+import type { ImportRowData } from './generated/ImportRowData'
+import type { ImportRowView } from './generated/ImportRowView'
+import type { ImportRowsReq } from './generated/ImportRowsReq'
+import type { ImportRowsResp } from './generated/ImportRowsResp'
 import type { Page } from './generated/Page'
 import type { Tag } from './generated/Tag'
 import type { UpdateTagReq } from './generated/UpdateTagReq'
@@ -24,7 +30,13 @@ export type {
   CreateWordReq,
   CreateWordbookReq,
   Definition,
+  ImportExecReq,
+  ImportPreviewResp,
   ImportResp,
+  ImportRowData,
+  ImportRowView,
+  ImportRowsReq,
+  ImportRowsResp,
   Page,
   Tag,
   UpdateTagReq,
@@ -129,11 +141,27 @@ export const words = {
       method: 'POST',
       body: JSON.stringify({ word_ids: wordIds, tag_ids: tagIds } satisfies BatchTagWordsReq),
     }),
-  /** 上传模板文件导入（csv / xlsx / xls / ods） */
-  importFile: (bookId: number, file: File) => {
+  /** 上传文件解析预览（不落库）：返回会话 token、统计与第一页行（后端分页） */
+  importPreview: (bookId: number, file: File, page = 1, pageSize = 25) => {
     const fd = new FormData()
     fd.append('file', file)
-    return api<ImportResp>(`/api/wordbooks/${bookId}/words/import`, { method: 'POST', body: fd })
+    return api<ImportPreviewResp>(
+      `/api/wordbooks/${bookId}/words/import/preview?page=${page}&page_size=${pageSize}`,
+      { method: 'POST', body: fd },
+    )
+  },
+  /** 行分页/编辑/筛选：会话内应用修正 → 后端重新校验 → 返回当前页（按组切片） */
+  importRows: (bookId: number, req: ImportRowsReq) =>
+    api<ImportRowsResp>(`/api/wordbooks/${bookId}/words/import/rows`, {
+      method: 'POST',
+      body: JSON.stringify(req),
+    }),
+  /** 执行导入：token 会话 + 标记「更新」的重复组行号（其余重复组跳过） */
+  importFile: (bookId: number, token: string, updateRows: number[]) => {
+    return api<ImportResp>(`/api/wordbooks/${bookId}/words/import`, {
+      method: 'POST',
+      body: JSON.stringify({ token, update_rows: updateRows } satisfies ImportExecReq),
+    })
   },
   /** 下载导入模板并触发浏览器保存 */
   downloadTemplate: async (bookId: number, format: 'csv' | 'xlsx') => {

@@ -48,6 +48,7 @@ mod tests {
 
     use super::require_api_key;
     use crate::common::state::AppState;
+    use crate::config::Config;
 
     async fn state_with(key: Option<&str>) -> AppState {
         AppState {
@@ -55,6 +56,8 @@ mod tests {
             api_key: key.map(Arc::from),
             wordbooks_cache: Arc::new(parking_lot::Mutex::new(None)),
             shuffle_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            import_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
+            config: Config::default(),
         }
     }
 

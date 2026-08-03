@@ -10,7 +10,9 @@ use super::dto::batch::BatchDeleteWordsResp;
 use super::dto::batch_tag::BatchTagWordsReq;
 use super::dto::batch_tag::BatchTagWordsResp;
 use super::dto::create::CreateWordReq;
-use super::dto::import::ImportResp;
+use super::dto::import::{
+    ImportExecReq, ImportPreviewResp, ImportResp, ImportRowsReq, ImportRowsResp, PreviewPageQuery,
+};
 use super::dto::list::ListWordsQuery;
 use super::dto::resp::WordResp;
 use super::dto::search::SearchWordsQuery;
@@ -39,6 +41,14 @@ pub fn router() -> Router<AppState> {
         .route(
             "/api/wordbooks/{book_id}/words/template",
             get(download_template),
+        )
+        .route(
+            "/api/wordbooks/{book_id}/words/import/preview",
+            post(import_preview).layer(DefaultBodyLimit::max(10 * 1024 * 1024)),
+        )
+        .route(
+            "/api/wordbooks/{book_id}/words/import/rows",
+            post(page_rows),
         )
         .route(
             "/api/wordbooks/{book_id}/words/import",
@@ -173,12 +183,49 @@ pub async fn download_template(
     }
 }
 
-/// 上传导入：multipart 字段 file，接受 csv / xlsx / xls / ods。
+/// 上传文件解析预览：multipart 字段 file，接受 csv / xlsx / xls / ods。不落库。
+pub async fn import_preview(
+    State(state): State<AppState>,
+    ApiPath(book_id): ApiPath<i32>,
+    Query(query): Query<PreviewPageQuery>,
+    mut multipart: Multipart,
+) -> Result<Json<ImportPreviewResp>, ApiError> {
+    let (name, bytes) = extract_file(&mut multipart).await?;
+    Ok(Json(
+        WordService::import_preview(
+            &state,
+            book_id,
+            &name,
+            bytes,
+            query.page.unwrap_or(1),
+            query.page_size.unwrap_or(25),
+        )
+        .await?,
+    ))
+}
+
+/// 行分页/编辑/筛选：会话内应用修正 → 重新校验 → 返回当前页。
+pub async fn page_rows(
+    State(state): State<AppState>,
+    ApiPath(book_id): ApiPath<i32>,
+    ApiJson(req): ApiJson<ImportRowsReq>,
+) -> Result<Json<ImportRowsResp>, ApiError> {
+    Ok(Json(WordService::page_rows(&state, book_id, req).await?))
+}
+
+/// 导入执行：JSON body 为 token 会话 + 重复行策略（update_rows）。
 pub async fn import_words(
     State(state): State<AppState>,
     ApiPath(book_id): ApiPath<i32>,
-    mut multipart: Multipart,
+    ApiJson(req): ApiJson<ImportExecReq>,
 ) -> Result<Json<ImportResp>, ApiError> {
+    Ok(Json(
+        WordService::import_words(&state, book_id, req).await?,
+    ))
+}
+
+/// 从 multipart 提取 file 字段（两导入接口共用）。
+async fn extract_file(multipart: &mut Multipart) -> Result<(String, Vec<u8>), ApiError> {
     let mut file: Option<(String, Vec<u8>)> = None;
     while let Some(field) = multipart
         .next_field()
@@ -195,10 +242,7 @@ pub async fn import_words(
             file = Some((name, bytes));
         }
     }
-    let (name, bytes) = file.ok_or_else(|| ApiError::BadRequest("未收到文件".into()))?;
-    Ok(Json(
-        WordService::import_words(&state, book_id, &name, bytes).await?,
-    ))
+    file.ok_or_else(|| ApiError::BadRequest("未收到文件".into()))
 }
 
 /// 批量删除单词（限定归属该书）。

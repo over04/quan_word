@@ -11,3 +11,9 @@ database:
 # 切换 PostgreSQL 时改为：
 # database:
 #   url: "postgres://postgres:postgres@localhost:5432/quan_word"
+# 批量导入（可选，缺省用下列值）
+import:
+  max_rows: 5000            # 单次导入数据行数上限（不含表头）
+  cache_ttl_secs: 1800      # 预览会话有效期（秒）：超时未导入自动清理
+  cache_cap: 16             # 预览会话缓存上限（条）：超出整体清空
+  cache_cleanup_secs: 60    # 后台清理任务扫描间隔（秒）
