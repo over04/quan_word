@@ -11,9 +11,15 @@ interface Props {
   onAddFirst: () => void
   /** 单词字号（px，12–28），音标/释义/行高按比例联动 */
   fontScale: number
-  /** 一键模糊：整页单词（含音标）/ 释义 */
-  coverWord: boolean
-  coverDef: boolean
+  /** 基线：整书单词（含音标）/ 释义 是否全隐藏 */
+  hideAllWord: boolean
+  hideAllDef: boolean
+  /** 手动点过的词：wordId → 该词绝对隐藏状态（例外，持久化，父级持有） */
+  wordDiff: Record<number, boolean>
+  defDiff: Record<number, boolean>
+  /** 手动点击单词/释义：父级按当前实际显示翻转并持久化 */
+  onToggleWord: (id: number) => void
+  onToggleDef: (id: number) => void
   /** 相邻页数据（预取缓存），滑动翻页过程中可见 */
   prevPage: Page<Word> | null
   nextPage: Page<Word> | null
@@ -66,9 +72,11 @@ interface SheetProps {
   d: Page<Word> | null
   pageNo: number
   fontScale: number
-  coverWord: boolean
-  coverDef: boolean
-  hidden: Record<number, { word: boolean; def: boolean }>
+  hideAllWord: boolean
+  hideAllDef: boolean
+  /** 手动点过的词：wordId → 该词绝对隐藏状态（例外） */
+  wordDiff: Record<number, boolean>
+  defDiff: Record<number, boolean>
   onToggleWord: (id: number) => void
   onToggleDef: (id: number) => void
   /** 单词行进入动画：仅首次加载播放 */
@@ -78,7 +86,11 @@ interface SheetProps {
   /** 标签 id → 名称（chips 显示） */
   tagName: Map<number, string>
   onOpenQuick: (w: Word) => void
-  onRemoveTag: (w: Word, tagId: number) => void
+  /** 待确认移除的标签（防误触：chip 第一次点击进确认态，第二次才删） */
+  pendingRemove: { w: Word; tid: number } | null
+  onToggleRemove: (w: Word, tid: number) => void
+  /** 点击词块其他区域：取消待确认 */
+  onClearRemove: () => void
 }
 
 /** 一张纸：页眉 + 横线单词网格 + 页脚；数据未就绪时渲染空白纸 */
@@ -86,16 +98,19 @@ function Sheet({
   d,
   pageNo,
   fontScale,
-  coverWord,
-  coverDef,
-  hidden,
+  hideAllWord,
+  hideAllDef,
+  wordDiff,
+  defDiff,
   onToggleWord,
   onToggleDef,
   wordsAnim,
   markMode,
   tagName,
   onOpenQuick,
-  onRemoveTag,
+  pendingRemove,
+  onToggleRemove,
+  onClearRemove,
 }: SheetProps) {
   const f = fontStyles(fontScale)
   const words = d?.items ?? []
@@ -113,17 +128,19 @@ function Sheet({
       {/* 多列单词：一行横线上多个单词，单词在线上方、释义在线下方 */}
       <div className="relative grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 flex-1 content-start px-9 md:px-11">
         {words.map((w, i) => {
-          const h = hidden[w.id]
-          // 手动点击优先；未手动设置过的词跟随全局开关（隐藏/显示）
-          const wordHidden = h ? h.word : coverWord
-          const defHidden = h ? h.def : coverDef
+          // 基线 + 手动例外：手动点过的词用其绝对状态，其余跟随基线（无优先级，最后操作者生效）
+          const wordHidden = w.id in wordDiff ? wordDiff[w.id] : hideAllWord
+          const defHidden = w.id in defDiff ? defDiff[w.id] : hideAllDef
           const full = formatDefinitions(w)
           return (
             <div
               key={w.id}
               className={`group/cell px-2 md:px-3 hover:bg-sand/15 transition-colors ${wordsAnim ? 'animate-word-rise' : ''}`}
               style={wordsAnim ? { animationDelay: `${Math.min(i, 8) * 40}ms` } : undefined}
-              onClick={markMode ? () => onOpenQuick(w) : undefined}
+              onClick={() => {
+                onClearRemove()
+                if (markMode) onOpenQuick(w)
+              }}
             >
               {/* 单词（横线上方，底部贴线）+ 音标：单词隐藏时一起晕开 */}
               <div className="flex items-end gap-2 min-w-0" style={{ height: f.rowH }}>
@@ -165,20 +182,28 @@ function Sheet({
               {/* 标签行：已有标签 chips（点击移除）+ 添加按钮 */}
               <div className="mt-1 flex items-center gap-1 min-w-0">
                 <div className="flex items-center gap-1 min-w-0 overflow-hidden">
-                  {w.tags.map((tid) => (
-                    <button
-                      key={tid}
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        onRemoveTag(w, tid)
-                      }}
-                      title={`移除标签「${tagName.get(tid) ?? tid}」`}
-                      className="shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-sage/50 text-charcoal/70 text-[10px] font-medium hover:bg-sage/80 hover:text-charcoal transition-colors"
-                    >
-                      {tagName.get(tid) ?? tid}
-                      <span className="text-charcoal/40 group-hover/cell:text-charcoal/70">✕</span>
-                    </button>
-                  ))}
+                  {w.tags.map((tid) => {
+                    const pending = pendingRemove?.w.id === w.id && pendingRemove.tid === tid
+                    return (
+                      <button
+                        key={tid}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onToggleRemove(w, tid)
+                        }}
+                        title={pending ? '再点一次确认移除' : `移除标签「${tagName.get(tid) ?? tid}」`}
+                        aria-pressed={pending}
+                        className={`shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                          pending
+                            ? 'bg-clay text-ivory'
+                            : 'bg-sage/50 text-charcoal/70 hover:bg-sage/80 hover:text-charcoal'
+                        }`}
+                      >
+                        {pending ? '确认移除？' : tagName.get(tid) ?? tid}
+                        {!pending && <span className="text-charcoal/40 group-hover/cell:text-charcoal/70">✕</span>}
+                      </button>
+                    )
+                  })}
                 </div>
                 <button
                   onClick={(e) => {
@@ -220,8 +245,12 @@ export default function PaperBookView({
   onNext,
   onAddFirst,
   fontScale,
-  coverWord,
-  coverDef,
+  hideAllWord,
+  hideAllDef,
+  wordDiff,
+  defDiff,
+  onToggleWord,
+  onToggleDef,
   prevPage,
   nextPage,
   markMode,
@@ -229,8 +258,6 @@ export default function PaperBookView({
   onTagsUpdated,
   onTagsCreated,
 }: Props) {
-  // 遮挡状态：wordId → { word, def }，翻页即清空（翻开新一页）
-  const [hidden, setHidden] = useState<Record<number, { word: boolean; def: boolean }>>({})
   // 快速标签编辑：当前目标单词（null = 未打开）
   const [quickWord, setQuickWord] = useState<Word | null>(null)
   // 标签 id → 名称映射（词块 chips）
@@ -261,11 +288,6 @@ export default function PaperBookView({
   const pendingResetRef = useRef(false)
 
   useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), [])
-
-  // 遮挡随翻页清空（翻开新一页）
-  useEffect(() => {
-    setHidden({})
-  }, [page])
 
   /** 数据就位复位：重排三页轨道，重挂载轨道回到对齐位（无过渡） */
   function doReset() {
@@ -386,23 +408,6 @@ export default function PaperBookView({
     else if (x > (rect.width * 2) / 3) turnTo('next')
   }
 
-  function toggleWord(id: number) {
-    setHidden((h) => {
-      const cur = h[id]
-      // 以实际显示状态（含全局开关）翻转：全局隐藏时可手动点亮，全局显示时可手动遮住
-      const wordHidden = cur ? cur.word : coverWord
-      return { ...h, [id]: { ...cur, word: !wordHidden } }
-    })
-  }
-
-  function toggleDef(id: number) {
-    setHidden((h) => {
-      const cur = h[id]
-      const defHidden = cur ? cur.def : coverDef
-      return { ...h, [id]: { ...cur, def: !defHidden } }
-    })
-  }
-
   /** 打开单词快速标签编辑 */
   function openQuick(w: Word) {
     setQuickWord(w)
@@ -416,6 +421,25 @@ export default function PaperBookView({
       handleTagsUpdated()
     } catch (e) {
       window.alert(e instanceof Error ? e.message : '保存失败')
+    }
+  }
+
+  // 待确认移除的标签（防误触：chip 第一次点击进确认态，第二次才删）；3 秒未操作自动恢复
+  const [pendingRemove, setPendingRemove] = useState<{ w: Word; tid: number } | null>(null)
+
+  useEffect(() => {
+    if (!pendingRemove) return
+    const t = window.setTimeout(() => setPendingRemove(null), 3000)
+    return () => window.clearTimeout(t)
+  }, [pendingRemove])
+
+  /** 标签 chip 点击：非确认态 → 进入确认态；确认态（同词同标签）→ 执行移除 */
+  function toggleRemoveTag(w: Word, tid: number) {
+    if (pendingRemove && pendingRemove.w.id === w.id && pendingRemove.tid === tid) {
+      setPendingRemove(null)
+      removeTag(w, tid)
+    } else {
+      setPendingRemove({ w, tid })
     }
   }
 
@@ -499,46 +523,55 @@ export default function PaperBookView({
                   d={triple.left.d}
                   pageNo={triple.left.pageNo}
                   fontScale={fontScale}
-                  coverWord={coverWord}
-                  coverDef={coverDef}
-                  hidden={hidden}
-                  onToggleWord={toggleWord}
-                  onToggleDef={toggleDef}
+                  hideAllWord={hideAllWord}
+                  hideAllDef={hideAllDef}
+                  wordDiff={wordDiff}
+                  defDiff={defDiff}
+                  onToggleWord={onToggleWord}
+                  onToggleDef={onToggleDef}
                   wordsAnim={wordsAnim}
                   markMode={markMode}
                   tagName={tagName}
                   onOpenQuick={openQuick}
-                  onRemoveTag={removeTag}
+                  pendingRemove={pendingRemove}
+                  onToggleRemove={toggleRemoveTag}
+                  onClearRemove={() => setPendingRemove(null)}
                 />
                 <Sheet
                   d={triple.mid.d}
                   pageNo={triple.mid.pageNo}
                   fontScale={fontScale}
-                  coverWord={coverWord}
-                  coverDef={coverDef}
-                  hidden={hidden}
-                  onToggleWord={toggleWord}
-                  onToggleDef={toggleDef}
+                  hideAllWord={hideAllWord}
+                  hideAllDef={hideAllDef}
+                  wordDiff={wordDiff}
+                  defDiff={defDiff}
+                  onToggleWord={onToggleWord}
+                  onToggleDef={onToggleDef}
                   wordsAnim={wordsAnim}
                   markMode={markMode}
                   tagName={tagName}
                   onOpenQuick={openQuick}
-                  onRemoveTag={removeTag}
+                  pendingRemove={pendingRemove}
+                  onToggleRemove={toggleRemoveTag}
+                  onClearRemove={() => setPendingRemove(null)}
                 />
                 <Sheet
                   d={triple.right.d}
                   pageNo={triple.right.pageNo}
                   fontScale={fontScale}
-                  coverWord={coverWord}
-                  coverDef={coverDef}
-                  hidden={hidden}
-                  onToggleWord={toggleWord}
-                  onToggleDef={toggleDef}
+                  hideAllWord={hideAllWord}
+                  hideAllDef={hideAllDef}
+                  wordDiff={wordDiff}
+                  defDiff={defDiff}
+                  onToggleWord={onToggleWord}
+                  onToggleDef={onToggleDef}
                   wordsAnim={wordsAnim}
                   markMode={markMode}
                   tagName={tagName}
                   onOpenQuick={openQuick}
-                  onRemoveTag={removeTag}
+                  pendingRemove={pendingRemove}
+                  onToggleRemove={toggleRemoveTag}
+                  onClearRemove={() => setPendingRemove(null)}
                 />
               </>
             )}

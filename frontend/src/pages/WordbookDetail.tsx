@@ -38,6 +38,33 @@ function loadFontScale(): number {
   return v >= 12 && v <= 28 ? v : 20
 }
 
+/** 遮挡状态：基线（整书全隐藏）+ 手动例外（点过的词，绝对隐藏状态）。按书持久化 */
+interface CoverState {
+  hideAllWord: boolean
+  hideAllDef: boolean
+  wordDiff: Record<number, boolean>
+  defDiff: Record<number, boolean>
+}
+
+const DEFAULT_COVER: CoverState = { hideAllWord: false, hideAllDef: false, wordDiff: {}, defDiff: {} }
+
+function loadCover(bookId: number): CoverState {
+  try {
+    const raw = localStorage.getItem(`qw_cover_${bookId}`)
+    if (!raw) return DEFAULT_COVER
+    const p = JSON.parse(raw)
+    if (typeof p !== 'object' || p === null) return DEFAULT_COVER
+    return {
+      hideAllWord: p.hideAllWord === true,
+      hideAllDef: p.hideAllDef === true,
+      wordDiff: p.wordDiff && typeof p.wordDiff === 'object' ? p.wordDiff : {},
+      defDiff: p.defDiff && typeof p.defDiff === 'object' ? p.defDiff : {},
+    }
+  } catch {
+    return DEFAULT_COVER
+  }
+}
+
 export default function WordbookDetail({ bookId, onBack }: Props) {
   const [book, setBook] = useState<Wordbook | null>(null)
   const [data, setData] = useState<Page<Word> | null>(null)
@@ -45,9 +72,12 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<number>(loadPageSize)
   const [fontScale, setFontScale] = useState<number>(loadFontScale)
-  // 一键模糊：整页单词（含音标）/ 释义（导航栏按钮切换）
-  const [coverWord, setCoverWord] = useState(false)
-  const [coverDef, setCoverDef] = useState(false)
+  // 遮挡：基线（整书全隐藏）+ 手动例外（点过的词）；持久化到 localStorage，打乱时重置
+  const [cover, setCover] = useState<CoverState>(() => loadCover(bookId))
+  // 任何变更即时写回；bookId 在组件生命周期内不变（每次进入书重新挂载）
+  useEffect(() => {
+    localStorage.setItem(`qw_cover_${bookId}`, JSON.stringify(cover))
+  }, [cover, bookId])
   // 打乱：seed 非空 = 随机顺序浏览（确定性，翻页稳定）
   const [shuffleSeed, setShuffleSeed] = useState<string | null>(null)
   // 标记模式：纸质书点击词块快速增删标签（不遮挡）
@@ -178,10 +208,11 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     })
   }
 
-  /** 打乱 / 恢复顺序：换 seed 并清缓存重载第 1 页（作用于当前标签筛选后的集合） */
+  /** 打乱 / 恢复顺序：换 seed 并清缓存重载第 1 页（作用于当前标签筛选后的集合）；每次点击即新一轮自测，遮挡全部重置 */
   function toggleShuffle() {
     const seed = shuffleSeed ? null : String(Date.now())
     setShuffleSeed(seed)
+    setCover(DEFAULT_COVER)
     cache.current.clear()
     setPage(1)
     loadPage(1, pageSize, { prefetch: true, seed, tagIds: filterTagIds })
@@ -246,6 +277,34 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     setFontScale(s)
   }
 
+  /** 四个全局动作：总是清空手动例外，结果确定、与操作顺序无关（无优先级） */
+  function handleHideAllWord() {
+    setCover((s) => ({ ...s, hideAllWord: true, wordDiff: {} }))
+  }
+  function handleShowAllWord() {
+    setCover((s) => ({ ...s, hideAllWord: false, wordDiff: {} }))
+  }
+  function handleHideAllDef() {
+    setCover((s) => ({ ...s, hideAllDef: true, defDiff: {} }))
+  }
+  function handleShowAllDef() {
+    setCover((s) => ({ ...s, hideAllDef: false, defDiff: {} }))
+  }
+
+  /** 手动点击单词/释义：以当前实际显示状态翻转，写死该词绝对状态。`in` 判定（不用 ??，diff 值为 false 时 ?? 会错误落到基线） */
+  function toggleWord(id: number) {
+    setCover((s) => ({
+      ...s,
+      wordDiff: { ...s.wordDiff, [id]: !(id in s.wordDiff ? s.wordDiff[id] : s.hideAllWord) },
+    }))
+  }
+  function toggleDef(id: number) {
+    setCover((s) => ({
+      ...s,
+      defDiff: { ...s.defDiff, [id]: !(id in s.defDiff ? s.defDiff[id] : s.hideAllDef) },
+    }))
+  }
+
   function goPrev() {
     if (page <= 1) return
     const np = page - 1
@@ -298,6 +357,9 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
       setError(e instanceof Error ? e.message : '删除失败')
     }
   }
+
+  const actBtn =
+    'inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium transition-colors duration-200 whitespace-nowrap text-charcoal/70 hover:text-charcoal hover:bg-sand/40 active:bg-sand/70'
 
   return (
     <div className="min-h-screen">
@@ -372,27 +434,22 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                   <SettingsIcon className="w-4 h-4" />
                 </button>
               )}
-              {/* 一键模糊（纸质书模式）：单词含音标 / 释义 */}
+              {/* 隐藏/显示（纸质书模式）：四个明确动作，任何操作都是绝对设置（无优先级）；打乱时重置 */}
               {mode === 'paper' && (
                 <>
-                <div className="bg-sand/30 rounded-full p-1 flex shrink-0" role="group" aria-label="一键模糊">
-                  <button
-                    aria-pressed={coverWord}
-                    onClick={() => setCoverWord((v) => !v)}
-                    className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap ${
-                      coverWord ? 'bg-charcoal text-ivory shadow-md' : 'text-charcoal/70 hover:text-charcoal'
-                    }`}
-                  >
-                    单词
+                <div className="bg-sand/30 rounded-full p-1 flex shrink-0" role="group" aria-label="隐藏与显示">
+                  <button onClick={handleHideAllWord} title="隐藏全部单词（含音标）" className={actBtn}>
+                    隐藏单词
                   </button>
-                  <button
-                    aria-pressed={coverDef}
-                    onClick={() => setCoverDef((v) => !v)}
-                    className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap ${
-                      coverDef ? 'bg-charcoal text-ivory shadow-md' : 'text-charcoal/70 hover:text-charcoal'
-                    }`}
-                  >
-                    释义
+                  <button onClick={handleShowAllWord} title="显示所有单词" className={actBtn}>
+                    显示单词
+                  </button>
+                  <span aria-hidden="true" className="w-px self-stretch mx-0.5 bg-charcoal/10" />
+                  <button onClick={handleHideAllDef} title="隐藏全部释义" className={actBtn}>
+                    隐藏释义
+                  </button>
+                  <button onClick={handleShowAllDef} title="显示所有释义" className={actBtn}>
+                    显示释义
                   </button>
                 </div>
                 {/* 标记：点击词块快速增删标签 */}
@@ -505,8 +562,12 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
               onNext={goNext}
               onAddFirst={handleOpenCreate}
               fontScale={fontScale}
-              coverWord={coverWord}
-              coverDef={coverDef}
+              hideAllWord={cover.hideAllWord}
+              hideAllDef={cover.hideAllDef}
+              wordDiff={cover.wordDiff}
+              defDiff={cover.defDiff}
+              onToggleWord={toggleWord}
+              onToggleDef={toggleDef}
               prevPage={neighbor.prev}
               nextPage={neighbor.next}
               markMode={markMode}
