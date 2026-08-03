@@ -65,6 +65,29 @@ function loadCover(bookId: number): CoverState {
   }
 }
 
+/** 标签筛选（按书持久化）：非法值过滤，损坏回退空 */
+function loadFilterTags(bookId: number): number[] {
+  try {
+    const raw = localStorage.getItem(`qw_filter_tags_${bookId}`)
+    if (!raw) return []
+    const p = JSON.parse(raw)
+    if (!Array.isArray(p)) return []
+    return p.filter((x) => Number.isFinite(x)).map(Number)
+  } catch {
+    return []
+  }
+}
+
+/** 打乱 seed（按书持久化）：刷新后恢复同一随机顺序 */
+function loadShuffleSeed(bookId: number): string | null {
+  try {
+    const v = localStorage.getItem(`qw_shuffle_seed_${bookId}`)
+    return v ? v : null
+  } catch {
+    return null
+  }
+}
+
 export default function WordbookDetail({ bookId, onBack }: Props) {
   const [book, setBook] = useState<Wordbook | null>(null)
   const [data, setData] = useState<Page<Word> | null>(null)
@@ -72,23 +95,28 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<number>(loadPageSize)
   const [fontScale, setFontScale] = useState<number>(loadFontScale)
-  // 遮挡：基线（整书全隐藏）+ 手动例外（点过的词）；持久化到 localStorage，打乱时重置
+  // 遮挡：基线（整书全隐藏）+ 手动例外（点过的词）；按书持久化到 localStorage
   const [cover, setCover] = useState<CoverState>(() => loadCover(bookId))
   // 任何变更即时写回；bookId 在组件生命周期内不变（每次进入书重新挂载）
   useEffect(() => {
     localStorage.setItem(`qw_cover_${bookId}`, JSON.stringify(cover))
   }, [cover, bookId])
-  // 打乱：seed 非空 = 随机顺序浏览（确定性，翻页稳定）
-  const [shuffleSeed, setShuffleSeed] = useState<string | null>(null)
-  // 标记模式：纸质书点击词块快速增删标签（不遮挡）
-  const [markMode, setMarkMode] = useState(false)
+  // 打乱：seed 非空 = 随机顺序浏览（确定性，翻页稳定）；按书持久化，刷新后恢复原随机顺序
+  const [shuffleSeed, setShuffleSeed] = useState<string | null>(() => loadShuffleSeed(bookId))
+  useEffect(() => {
+    if (shuffleSeed) localStorage.setItem(`qw_shuffle_seed_${bookId}`, shuffleSeed)
+    else localStorage.removeItem(`qw_shuffle_seed_${bookId}`)
+  }, [shuffleSeed, bookId])
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [error, setError] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<Word | null>(null)
-  // 标签：该书全部标签 + 筛选（多选交集，两模式共享）+ 管理弹窗
+  // 标签：该书全部标签 + 筛选（多选交集，两模式共享）+ 管理弹窗；筛选按书持久化，刷新后恢复
   const [tags, setTags] = useState<Tag[]>([])
-  const [filterTagIds, setFilterTagIds] = useState<number[]>([])
+  const [filterTagIds, setFilterTagIds] = useState<number[]>(() => loadFilterTags(bookId))
+  useEffect(() => {
+    localStorage.setItem(`qw_filter_tags_${bookId}`, JSON.stringify(filterTagIds))
+  }, [filterTagIds, bookId])
   const [tagFilterOpen, setTagFilterOpen] = useState(false)
   const [manageTagsOpen, setManageTagsOpen] = useState(false)
   // 列表模式刷新信号：增删改后递增，WordTable 重新查询
@@ -208,11 +236,20 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     })
   }
 
-  /** 打乱 / 恢复顺序：换 seed 并清缓存重载第 1 页（作用于当前标签筛选后的集合）；每次点击即新一轮自测，遮挡全部重置 */
+  /** 打乱 / 恢复顺序：换 seed 并清缓存重载第 1 页（作用于当前标签筛选后的集合）；遮挡状态按词 id 存储，与顺序无关，保持 */
   function toggleShuffle() {
     const seed = shuffleSeed ? null : String(Date.now())
     setShuffleSeed(seed)
-    setCover(DEFAULT_COVER)
+    cache.current.clear()
+    setPage(1)
+    loadPage(1, pageSize, { prefetch: true, seed, tagIds: filterTagIds })
+  }
+
+  /** 重新打乱：保持打乱开启，换新 seed（仅打乱状态下可点）；遮挡状态保持 */
+  function reshuffle() {
+    if (!shuffleSeed) return
+    const seed = String(Date.now())
+    setShuffleSeed(seed)
     cache.current.clear()
     setPage(1)
     loadPage(1, pageSize, { prefetch: true, seed, tagIds: filterTagIds })
@@ -452,18 +489,6 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                     显示释义
                   </button>
                 </div>
-                {/* 标记：点击词块快速增删标签 */}
-                <button
-                  aria-pressed={markMode}
-                  onClick={() => setMarkMode((v) => !v)}
-                  className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap shrink-0 ${
-                    markMode
-                      ? 'bg-charcoal text-ivory shadow-md'
-                      : 'text-charcoal/70 hover:text-charcoal'
-                  }`}
-                >
-                  标记
-                </button>
                 {/* 打乱：随机顺序浏览（确定性 seed，翻页稳定） */}
                 <button
                   aria-pressed={shuffleSeed !== null}
@@ -476,6 +501,16 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                 >
                   打乱
                 </button>
+                {/* 重新打乱：保持打乱开启，换新随机顺序（新一轮自测） */}
+                {shuffleSeed !== null && (
+                  <button
+                    onClick={reshuffle}
+                    title="重新生成随机顺序"
+                    className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap shrink-0 text-charcoal/70 hover:text-charcoal hover:bg-sand/40"
+                  >
+                    重新打乱
+                  </button>
+                )}
                 </>
               )}
               <button
@@ -570,7 +605,6 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
               onToggleDef={toggleDef}
               prevPage={neighbor.prev}
               nextPage={neighbor.next}
-              markMode={markMode}
               tags={tags}
               onTagsUpdated={onMutated}
               onTagsCreated={(tag) => setTags((prev) => [...prev, tag])}

@@ -23,8 +23,6 @@ interface Props {
   /** 相邻页数据（预取缓存），滑动翻页过程中可见 */
   prevPage: Page<Word> | null
   nextPage: Page<Word> | null
-  /** 标记模式：点击词块弹标签快速编辑（不遮挡） */
-  markMode: boolean
   /** 该书全部标签（词块 chips 与快速弹窗用） */
   tags: Tag[]
   /** 单词标签集变更成功后回调（父级刷新数据） */
@@ -81,8 +79,6 @@ interface SheetProps {
   onToggleDef: (id: number) => void
   /** 单词行进入动画：仅首次加载播放 */
   wordsAnim: boolean
-  /** 标记模式：词块点击弹标签编辑 */
-  markMode: boolean
   /** 标签 id → 名称（chips 显示） */
   tagName: Map<number, string>
   onOpenQuick: (w: Word) => void
@@ -105,7 +101,6 @@ function Sheet({
   onToggleWord,
   onToggleDef,
   wordsAnim,
-  markMode,
   tagName,
   onOpenQuick,
   pendingRemove,
@@ -139,15 +134,14 @@ function Sheet({
               style={wordsAnim ? { animationDelay: `${Math.min(i, 8) * 40}ms` } : undefined}
               onClick={() => {
                 onClearRemove()
-                if (markMode) onOpenQuick(w)
               }}
             >
               {/* 单词（横线上方，底部贴线）+ 音标：单词隐藏时一起晕开 */}
               <div className="flex items-end gap-2 min-w-0" style={{ height: f.rowH }}>
                 <button
-                  onClick={markMode ? () => onOpenQuick(w) : () => onToggleWord(w.id)}
-                  aria-pressed={markMode ? undefined : wordHidden}
-                  title={markMode ? '编辑标签' : wordHidden ? '点击显示单词' : '点击遮挡单词，回忆拼写'}
+                  onClick={() => onToggleWord(w.id)}
+                  aria-pressed={wordHidden}
+                  title={wordHidden ? '点击显示单词' : '点击遮挡单词，回忆拼写'}
                   style={f.word}
                   className="font-serif text-charcoal tracking-wide leading-none pb-[3px] truncate rounded -mx-1 px-1 transition-colors duration-150 hover:bg-sand/50 focus-visible:outline-2 focus-visible:outline-clay focus-visible:outline-offset-4"
                 >
@@ -170,9 +164,9 @@ function Sheet({
               {/* 释义（横线下方）：可换行显示，最多 3 行，不再压缩成一行 */}
               <div className="pt-[3px] pb-1 min-w-0" style={{ minHeight: f.defMinH }}>
                 <button
-                  onClick={markMode ? () => onOpenQuick(w) : () => onToggleDef(w.id)}
-                  aria-pressed={markMode ? undefined : defHidden}
-                  title={markMode ? '编辑标签' : defHidden ? '点击显示释义' : full}
+                  onClick={() => onToggleDef(w.id)}
+                  aria-pressed={defHidden}
+                  title={defHidden ? '点击显示释义' : full}
                   style={f.def}
                   className="w-full text-charcoal/60 leading-snug line-clamp-3 text-left rounded -mx-1 px-1 transition-colors duration-150 hover:bg-sand/50 focus-visible:outline-2 focus-visible:outline-clay focus-visible:outline-offset-4"
                 >
@@ -253,7 +247,6 @@ export default function PaperBookView({
   onToggleDef,
   prevPage,
   nextPage,
-  markMode,
   tags: allTags,
   onTagsUpdated,
   onTagsCreated,
@@ -530,7 +523,6 @@ export default function PaperBookView({
                   onToggleWord={onToggleWord}
                   onToggleDef={onToggleDef}
                   wordsAnim={wordsAnim}
-                  markMode={markMode}
                   tagName={tagName}
                   onOpenQuick={openQuick}
                   pendingRemove={pendingRemove}
@@ -548,7 +540,6 @@ export default function PaperBookView({
                   onToggleWord={onToggleWord}
                   onToggleDef={onToggleDef}
                   wordsAnim={wordsAnim}
-                  markMode={markMode}
                   tagName={tagName}
                   onOpenQuick={openQuick}
                   pendingRemove={pendingRemove}
@@ -566,7 +557,6 @@ export default function PaperBookView({
                   onToggleWord={onToggleWord}
                   onToggleDef={onToggleDef}
                   wordsAnim={wordsAnim}
-                  markMode={markMode}
                   tagName={tagName}
                   onOpenQuick={openQuick}
                   pendingRemove={pendingRemove}
