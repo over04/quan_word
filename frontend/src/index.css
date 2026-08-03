@@ -95,6 +95,11 @@
   [class*="transition-all"] {
     transition: none;
   }
+  /* 视图切换过渡同样关闭 */
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none !important;
+  }
 }
 
 /* 基础色：暖米白底 + 深炭文字 */

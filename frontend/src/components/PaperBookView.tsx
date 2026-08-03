@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { words, type Page, type Tag, type Word } from '../api'
 import { BookIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from './Icons'
 import TagQuickModal from './TagQuickModal'
@@ -56,6 +56,8 @@ function Covered({ text }: { text: string }) {
         WebkitMaskImage:
           'radial-gradient(ellipse 150% 160% at 50% 50%, black 12%, transparent 74%)',
         maskImage: 'radial-gradient(ellipse 150% 160% at 50% 50%, black 12%, transparent 74%)',
+        // 整页遮挡时大量 blur 元素：提示合成器独立图层，避免频繁重栅格化
+        willChange: 'filter',
       }}
     >
       {text}
@@ -65,6 +67,8 @@ function Covered({ text }: { text: string }) {
 
 const DRAG_THRESHOLD_PX = 90
 const SLIDE_MS = 450
+/** 轨道平移过渡（JSX 内联与拖动结束恢复共用，避免字符串漂移） */
+const TRACK_TRANSITION = 'transform 0.45s cubic-bezier(0.22, 0.8, 0.22, 1)'
 
 interface SheetProps {
   d: Page<Word> | null
@@ -89,8 +93,8 @@ interface SheetProps {
   onClearRemove: () => void
 }
 
-/** 一张纸：页眉 + 横线单词网格 + 页脚；数据未就绪时渲染空白纸 */
-function Sheet({
+/** 一张纸：页眉 + 横线单词网格 + 页脚；数据未就绪时渲染空白纸。memo：拖动/低频状态变化时跳过重渲染 */
+const Sheet = memo(function Sheet({
   d,
   pageNo,
   fontScale,
@@ -230,7 +234,7 @@ function Sheet({
       </div>
     </div>
   )
-}
+})
 
 export default function PaperBookView({
   data,
@@ -253,12 +257,13 @@ export default function PaperBookView({
 }: Props) {
   // 快速标签编辑：当前目标单词（null = 未打开）
   const [quickWord, setQuickWord] = useState<Word | null>(null)
-  // 标签 id → 名称映射（词块 chips）
-  const tagName = new Map(allTags.map((t) => [t.id, t.name]))
+  // 标签 id → 名称映射（词块 chips）；引用稳定，避免拖动时 Sheet 重渲染
+  const tagName = useMemo(() => new Map(allTags.map((t) => [t.id, t.name])), [allTags])
   // 滑动翻页：offset 单位 = 页宽（0 = 当前页；-1 = 右侧相邻页可见；+1 = 左侧相邻页可见）
   const [offset, setOffset] = useState(0)
   const [sliding, setSliding] = useState(false)
-  const [dragging, setDragging] = useState(false)
+  // 轨道 DOM 引用：拖动中直接改 transform/transition，避免每帧 setState 重渲染整棵轨道
+  const trackRef = useRef<HTMLDivElement | null>(null)
   // 轨道 key：翻页完成时重挂载轨道，保证复位位（中间页对齐）绝无过渡动画
   const [trackKey, setTrackKey] = useState(0)
   // 单词行进入动画：仅首次加载播放；翻页后抑制（重挂载不再触发淡入）
@@ -358,7 +363,8 @@ export default function PaperBookView({
     startX.current = e.clientX
     dxRef.current = 0
     widthRef.current = e.currentTarget.getBoundingClientRect().width || 1
-    setDragging(true)
+    // 拖动中禁用过渡（直驱 DOM，零重渲染）；轨道已渲染（data 存在）
+    if (trackRef.current) trackRef.current.style.transition = 'none'
   }
 
   function onPointerMove(e: React.PointerEvent) {
@@ -370,13 +376,18 @@ export default function PaperBookView({
       if (dx > 0 && page <= 1) return
     }
     dxRef.current = dx
-    setOffset(Math.max(-1, Math.min(1, dx / widthRef.current)))
+    const off = Math.max(-1, Math.min(1, dx / widthRef.current))
+    // 直驱轨道 transform（与 state 同公式），拖动帧不触发 React 渲染
+    if (trackRef.current) {
+      trackRef.current.style.transform = `translateX(${(off - 1) * 33.333333}%)`
+    }
   }
 
   function onPointerUp() {
     if (!draggingRef.current) return
     draggingRef.current = false
-    setDragging(false)
+    // 恢复过渡（回弹/翻页动画由 state 驱动；直接写回完整值，不依赖 React 下一次渲染）
+    if (trackRef.current) trackRef.current.style.transition = TRACK_TRANSITION
     const dx = dxRef.current
     dxRef.current = 0
     // 有实际拖拽位移 → 抑制随后的 click（避免误触遮挡/热区）
@@ -402,9 +413,9 @@ export default function PaperBookView({
   }
 
   /** 打开单词快速标签编辑 */
-  function openQuick(w: Word) {
+  const openQuick = useCallback((w: Word) => {
     setQuickWord(w)
-  }
+  }, [])
 
   /** 词块 chips 移除单个标签：全量替换该词标签集 */
   async function removeTag(w: Word, tagId: number) {
@@ -427,14 +438,20 @@ export default function PaperBookView({
   }, [pendingRemove])
 
   /** 标签 chip 点击：非确认态 → 进入确认态；确认态（同词同标签）→ 执行移除 */
-  function toggleRemoveTag(w: Word, tid: number) {
-    if (pendingRemove && pendingRemove.w.id === w.id && pendingRemove.tid === tid) {
-      setPendingRemove(null)
-      removeTag(w, tid)
-    } else {
-      setPendingRemove({ w, tid })
-    }
-  }
+  const toggleRemoveTag = useCallback(
+    (w: Word, tid: number) => {
+      if (pendingRemove && pendingRemove.w.id === w.id && pendingRemove.tid === tid) {
+        setPendingRemove(null)
+        removeTag(w, tid)
+      } else {
+        setPendingRemove({ w, tid })
+      }
+    },
+    [pendingRemove],
+  )
+
+  /** 取消待确认移除（引用稳定，供 Sheet memo 使用） */
+  const clearRemove = useCallback(() => setPendingRemove(null), [])
 
   /** 标签变更后：抑制词行重播动画，再通知父级刷新 */
   function handleTagsUpdated() {
@@ -483,16 +500,20 @@ export default function PaperBookView({
           onPointerCancel={onPointerUp}
           onClick={onPaperClick}
         >
-          {/* 左右翻页热区提示（桌面 hover 显示） */}
+          {/* 左右翻页热区提示（桌面 hover 显示，淡入淡出）；首页/末页移除 hover 类，箭头永不显示 */}
           <div
             aria-hidden="true"
-            className="absolute inset-y-0 left-0 w-1/3 flex items-center pl-3 pointer-events-none opacity-0 md:group-hover:opacity-30 transition-opacity z-10"
+            className={`absolute inset-y-0 left-0 w-1/3 flex items-center pl-3 pointer-events-none opacity-0 transition-opacity z-10 ${
+              page > 1 ? 'md:group-hover:opacity-30' : ''
+            }`}
           >
             <ChevronLeftIcon className="w-7 h-7 text-charcoal/70" />
           </div>
           <div
             aria-hidden="true"
-            className="absolute inset-y-0 right-0 w-1/3 flex items-center justify-end pr-3 pointer-events-none opacity-0 md:group-hover:opacity-30 transition-opacity z-10"
+            className={`absolute inset-y-0 right-0 w-1/3 flex items-center justify-end pr-3 pointer-events-none opacity-0 transition-opacity z-10 ${
+              page < data.total_pages ? 'md:group-hover:opacity-30' : ''
+            }`}
           >
             <ChevronRightIcon className="w-7 h-7 text-charcoal/70" />
           </div>
@@ -501,13 +522,13 @@ export default function PaperBookView({
           {/* 三页轨道：当前页居中，相邻页在两侧（滑动时直接可见）；key 变化 = 翻页完成重挂载对齐 */}
           <div
             key={trackKey}
+            ref={trackRef}
             className="flex w-[300%]"
             style={{
               // 轨道 = 3 页宽（w-[300%]）：offset 0 = 中间页居中（平移 1 页 = 轨道 1/3），±1 = 相邻页居中
+              // 拖动中 transform/transition 由 onPointerMove 直驱 DOM 覆盖，此处仅 state 驱动的动画
               transform: `translateX(${(offset - 1) * 33.333333}%)`,
-              transition: dragging
-                ? 'none'
-                : 'transform 0.45s cubic-bezier(0.22, 0.8, 0.22, 1)',
+              transition: TRACK_TRANSITION,
             }}
           >
             {triple && (
@@ -527,7 +548,7 @@ export default function PaperBookView({
                   onOpenQuick={openQuick}
                   pendingRemove={pendingRemove}
                   onToggleRemove={toggleRemoveTag}
-                  onClearRemove={() => setPendingRemove(null)}
+                  onClearRemove={clearRemove}
                 />
                 <Sheet
                   d={triple.mid.d}
@@ -544,7 +565,7 @@ export default function PaperBookView({
                   onOpenQuick={openQuick}
                   pendingRemove={pendingRemove}
                   onToggleRemove={toggleRemoveTag}
-                  onClearRemove={() => setPendingRemove(null)}
+                  onClearRemove={clearRemove}
                 />
                 <Sheet
                   d={triple.right.d}
@@ -561,7 +582,7 @@ export default function PaperBookView({
                   onOpenQuick={openQuick}
                   pendingRemove={pendingRemove}
                   onToggleRemove={toggleRemoveTag}
-                  onClearRemove={() => setPendingRemove(null)}
+                  onClearRemove={clearRemove}
                 />
               </>
             )}

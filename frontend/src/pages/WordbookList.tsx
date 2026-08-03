@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { wordbooks, type Wordbook } from '../api'
 import WordbookFormModal from '../components/WordbookFormModal'
+import ConfirmModal from '../components/ConfirmModal'
 import { ArrowRightIcon, BookIcon, PencilIcon, PlusIcon, TrashIcon } from '../components/Icons'
 
 interface Props {
@@ -18,6 +19,8 @@ export default function WordbookList({ onOpen }: Props) {
   const [error, setError] = useState('')
   const [formOpen, setFormOpen] = useState(false)
   const [editing, setEditing] = useState<Wordbook | null>(null)
+  // 待确认删除的书（ConfirmModal 替换原生 confirm）
+  const [pendingDelete, setPendingDelete] = useState<Wordbook | null>(null)
 
   async function refresh() {
     try {
@@ -34,8 +37,15 @@ export default function WordbookList({ onOpen }: Props) {
     refresh()
   }, [])
 
-  async function handleDelete(b: Wordbook) {
-    if (!window.confirm(`确定删除「${b.name}」吗？其中的单词也会一并删除。`)) return
+  // 返回主页：滚动复位到顶部（body 滚动位置会从书页继承）
+  useEffect(() => {
+    window.scrollTo(0, 0)
+  }, [])
+
+  async function confirmDelete() {
+    if (!pendingDelete) return
+    const b = pendingDelete
+    setPendingDelete(null)
     try {
       await wordbooks.remove(b.id)
       refresh()
@@ -204,7 +214,7 @@ export default function WordbookList({ onOpen }: Props) {
                         setEditing(b)
                         setFormOpen(true)
                       }}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-sand/50 text-charcoal/80 text-xs font-medium hover:bg-sand/80 transition-colors md:opacity-0 md:group-hover:opacity-100"
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-sand/50 text-charcoal/80 text-xs font-medium hover:bg-sand/80 transition-[color,opacity] md:opacity-0 md:group-hover:opacity-100"
                     >
                       <PencilIcon className="w-3.5 h-3.5" />
                       编辑
@@ -212,9 +222,9 @@ export default function WordbookList({ onOpen }: Props) {
                     <button
                       onClick={(e) => {
                         e.stopPropagation()
-                        handleDelete(b)
+                        setPendingDelete(b)
                       }}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-charcoal/10 text-charcoal/50 text-xs font-medium hover:border-red-300 hover:text-red-400 transition-colors md:opacity-0 md:group-hover:opacity-100"
+                      className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-charcoal/10 text-charcoal/50 text-xs font-medium hover:border-red-300 hover:text-red-400 transition-[color,opacity] md:opacity-0 md:group-hover:opacity-100"
                     >
                       <TrashIcon className="w-3.5 h-3.5" />
                       删除
@@ -238,6 +248,15 @@ export default function WordbookList({ onOpen }: Props) {
             setFormOpen(false)
             await refresh()
           }}
+        />
+      )}
+
+      {pendingDelete && (
+        <ConfirmModal
+          title={`删除「${pendingDelete.name}」？`}
+          message="其中的单词也会一并删除，此操作不可恢复。"
+          onConfirm={confirmDelete}
+          onCancel={() => setPendingDelete(null)}
         />
       )}
     </div>
