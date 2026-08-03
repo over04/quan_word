@@ -37,6 +37,11 @@ Key backend decisions:
 - `definitions` stored as JSON column; `Definition` (entity crate) is the typed model for that column, converted with `serde_json::to_value/from_value`.
 - `timestamp_with_time_zone()` in migrations — `timestamp()` breaks PG (DateTimeUtc needs TIMESTAMPTZ); both work on SQLite.
 - Shared contract types are exported to TypeScript via `ts-rs`: `#[ts(export, export_to = "...ts")]` generates a test; running `cargo test` writes the files to `frontend/src/generated/` (see `.cargo/config.toml` `TS_RS_EXPORT_DIR`).
+- **批量导入（模板约定）**: 6 列表头 `单词,音标,词性,释义,例句,标签`；**每行一个义项**（一个词性对应一个释义），同一单词的多义项写多行（单词列重复），导入时按拼写（trim+小写）合并为一个单词——音标/例句取组内首个非空、标签取并集、义项按行序拼接；标签列多个标签用 `；`/`;` 分隔，缺失标签自动创建；全空行跳过；5 列旧模板缺列取空自动兼容。
+- **词性白名单 21 项**（前后端一致，`service.rs` validate 与前端下拉）：`n. / c / C / u / U / cu / CU / v. / vt. / vi. / adj. / adv. / prep. / conj. / pron. / num. / art. / interj. / aux. / abbr. / phr.`（C=可数、U=不可数名词；vt./vi.=及物/不及物动词；留空合法）。
+- **导入三步会话（后端为主）**: ①`POST /words/import/preview`（multipart 上传，文件只传一次）解析后把**全部解析行**（含全空行）缓存为 token 会话；②`POST /words/import/rows`（token + page/page_size/filter/updates）在会话内应用行级修正 → 重新校验 → 按**组切片**分页返回（组不跨页）；③`POST /words/import`（token + update_rows）一次性消费会话执行导入。前端仅显示与草稿编辑（防抖 500ms 提交），统计/错误标记/分页/筛选全部由后端计算。
+- **导入容错**: 校验失败的行跳过并报告行号（`skipped_errors`），其余正常导入；同书重复拼写的单词默认更新（覆盖字段、标签合并 union），预览中可跳过（`skipped_duplicates`）；结果统计 `imported/updated/skipped_errors/skipped_duplicates/created_tags`。
+- **导入会话缓存生命周期配置化**: `config.import` 段（`max_rows`/`cache_ttl_secs`/`cache_cap`/`cache_cleanup_secs`，缺省 5000/1800/16/60，加载时校验 >0）；`AppState::spawn_import_cache_cleaner` 后台定时清理过期会话（随 `router::build` 启动）；`cache_cap` 超出整体清空。
 
 ## Key Directories
 
@@ -45,13 +50,13 @@ crates/entity/src/          SeaORM 2.0 dense entities (word.rs, wordbook.rs) + d
 crates/migration/src/       Migrator + m20260802_* migration files (chronological)
 crates/server/src/
   business/wordbooks.rs + wordbooks/   /api/wordbooks... (router/service/repo/dto/error)
-  business/wordbooks/words.rs + words/ /api/wordbooks/{book_id}/words... (router/service/repo/dto/error/order/sort/sort_dir)
+  business/wordbooks/words.rs + words/ /api/wordbooks/{book_id}/words... (router/service/repo/dto/error/import/order/sort/sort_dir)
   common/error.rs           ApiError aggregate (HTTP boundary)
   common/http/              Asset (rust-embed) + spa.rs static handler + json.rs/path.rs (ApiJson/ApiPath 提取器) + normalize.rs (错误归一中间件)
   common/model/page.rs      PageResp<T> pagination model
   common/model/paging.rs    parse_paging shared pagination query parsing
-  common/state.rs           AppState (db + wordbooks_cache + shuffle_cache)
-  config/                   config.rs root + server.rs / database.rs
+  common/state.rs           AppState (db + wordbooks_cache + shuffle_cache + import_cache + config)
+  config/                   config.rs root + server.rs / database.rs / import.rs
   init/                     run() entry + db.rs connection/migration
 frontend/src/
   generated/                ts-rs generated TS contract types (source of truth, do not hand-edit)
@@ -94,11 +99,11 @@ Verification: clippy gate + `cargo test`; API smoke-tested via curl against a ru
 - **DTO files:** named by action without suffixes — `dto/create.rs`, `dto/update.rs`, `dto/resp.rs`; type names stay fully semantic (`CreateWordbookReq`, `UpdateWordbookReq`, `WordbookResp`). HTTP query params are typed too: `dto/list.rs` (`ListWordsQuery`) / `dto/search.rs` (`SearchWordsQuery`); shared pagination parsing lives in `common/model/paging.rs` (`parse_paging`).
 - **Errors:** each business domain defines its own `thiserror` enum with semantic variants (no vague `BadRequest(String)` in services); `common::error::ApiError` is the HTTP aggregate, mapped via `From` in each domain's `error.rs`.
 - **Closed sets are enums:** query params (`order`, `seed`, `sort`) are parsed once at the router boundary into `WordOrder` / `SortField` / `SortDir`; business logic matches enum variants, never string literals. `SortField`/`SortDir` use `strum::EnumString` (declarative mapping); `WordOrder` keeps a handwritten parse because `Random(String)` carries a payload strum cannot express.
-- **ts-rs contract:** frontend-facing DTOs derive `TS` with `#[ts(export, export_to = "...ts")]` (+ `rename` where the TS name differs, `#[ts(type = "number")]` for u64, `#[ts(optional)]` for omitted request fields). Regenerate with `cargo test` after DTO changes; never hand-edit `frontend/src/generated/`.
+- **ts-rs contract:** frontend-facing DTOs derive `TS` with `#[ts(export, export_to = "...ts")]` (+ `rename` where the TS name differs, `#[ts(type = "number")]` for single u64, `#[ts(type = "Array<number>")]` for u64 collections, `#[ts(optional)]` for omitted request fields). Regenerate with `cargo test` after DTO changes; never hand-edit `frontend/src/generated/`.
 
 **Backend patterns:**
 - Services are unit structs (`pub struct WordbookService;`) with associated async fns taking `&AppState` as first arg (access DB via `state.db.as_ref()`); repos are unit structs taking `&DatabaseConnection`.
-- `AppState` holds the DB pool plus two process-memory caches: `wordbooks_cache` (list result, invalidated via `state.invalidate_wordbooks()` by wordbook CRUD + word create/delete) and `shuffle_cache` ((book_id, seed) → shuffled id sequence, cap `SHUFFLE_CACHE_CAP`, cleared on word create/delete). Locks are `parking_lot::Mutex`, never held across `.await`.
+- `AppState` holds the DB pool, the full `Config`, and three process-memory caches: `wordbooks_cache` (list result, invalidated via `state.invalidate_wordbooks()` by wordbook CRUD + word create/delete), `shuffle_cache` ((book_id, tag_ids, seed) → shuffled id sequence, cap `SHUFFLE_CACHE_CAP`, cleared on word create/delete/update_tags/batch_tag), and `import_cache` (导入预览会话：token → book_id + 全量行 JSON 载荷 + 创建时间；TTL/容量由 `config.import` 控制，后台清理任务按 `cache_cleanup_secs` 扫描；导入执行时一次性消费)。Locks are `parking_lot::Mutex`, never held across `.await`（async fn 内必须用块作用域限定 guard，否则 Future 非 Send 无法作 axum handler）。
 - Handlers return `Result<impl IntoResponse, ApiError>`; `?` converts domain errors and `DbErr` via `From`. `ApiError` maps NotFound/BadRequest/Unauthorized/Db to 404/400/401/500 with user-facing Chinese messages; 500 responses never leak internals (Db details only go to the log).
 - **Error response spec (enforced):** every error response is `{"error": 中文消息}` JSON. Request-body extraction MUST use `ApiJson<T>` (`common/http/json.rs`) and path params MUST use `ApiPath<T>` (`common/http/path.rs`) — axum 0.8 handler extraction failures short-circuit via `rejection.into_response()` and never call `From<Rejection>`, so raw `Json`/`Path` extractors produce English plain-text/422 responses; `ApiJson`/`ApiPath` have `Rejection = ApiError` (400, Chinese). `Query` DTO fields stay `String`-typed (no rejection possible). Framework-level plain-text responses (405 Method Not Allowed, uncaught 500) are wrapped into JSON by the `common/http/normalize.rs` middleware (mounted inside the compression layer in `router.rs`).
 - Validation returns domain errors whose `thiserror` text is user-facing Chinese.
@@ -120,15 +125,18 @@ Verification: clippy gate + `cargo test`; API smoke-tested via curl against a ru
 |---|---|
 | `crates/server/src/init/db.rs` | Connection + PRAGMA foreign_keys + migration order (failure here breaks cascades) |
 | `crates/server/src/router.rs` | Top-level route aggregation; add new top-level domains here (domain routes live in each domain's router.rs) |
-| `crates/server/src/business/wordbooks/words/service.rs` | Pagination, validation, seeded shuffle, JSON conversion |
-| `crates/server/src/business/wordbooks/words/order.rs` | WordOrder enum + query param parsing (13 POS whitelist in service validate) |
-|`crates/server/src/common/http/asset.rs` | rust-embed folder `../../frontend/dist/` — must exist at compile time (keep `.gitkeep`) |
-|`Dockerfile` | Multi-stage: node → `rust:1.96-alpine` (musl static) → scratch; `--mount=type=cache` persists cargo registry/target |
-|`docker-compose.yml` | `./data` bind mount (SQLite inspectable), port, PG-switch comment template |
+| `crates/server/src/business/wordbooks/words/service.rs` | Pagination, validation, seeded shuffle, JSON conversion, 导入预览/执行/分页重校验（import_preview/page_rows/import_words） |
+| `crates/server/src/business/wordbooks/words/import.rs` | 导入解析：行式义项解析（行号=物理行号，csv 空行不丢位）、行级校验（prepare_rows）、按拼写分组（group_rows）、标签解析（parse_tags，20 字符上限） |
+| `crates/server/src/business/wordbooks/words/order.rs` | WordOrder enum + query param parsing（21 项词性白名单在 service validate） |
+| `crates/server/src/config/import.rs` | 导入配置：max_rows / cache_ttl_secs / cache_cap / cache_cleanup_secs（缺省 5000/1800/16/60，serde default + Default） |
+| `crates/server/src/common/http/asset.rs` | rust-embed folder `../../frontend/dist/` — must exist at compile time (keep `.gitkeep`) |
+| `Dockerfile` | Multi-stage: node → `rust:1.96-alpine` (musl static) → scratch; `--mount=type=cache` persists cargo registry/target |
+| `docker-compose.yml` | `./data` bind mount (SQLite inspectable), port, PG-switch comment template |
 | `.cargo/config.toml` | `TS_RS_EXPORT_DIR` for ts-rs generated contract output |
 | `frontend/src/components/PaperBookView.tsx` | Core paper-book UI: ruled grid, tap-to-cover, gesture/zone/keyboard page turns |
+| `frontend/src/components/ImportModal.tsx` | 导入弹窗：上传-预览-确认三步，后端分页/筛选/校验，草稿防抖提交（fetchRows/reqSeq 竞态保护），重复组跳过集合 |
 | `frontend/src/index.css` | Design tokens (`@theme`), keyframes, texture overlays |
-| `config.example.yaml` | Runtime config template — copy to `config.yaml` (git-ignored): `server.host/port`, `database.url` (sqlite:// or postgres://) |
+| `config.example.yaml` | Runtime config template — copy to `config.yaml` (git-ignored): `server.host/port`, `database.url` (sqlite:// or postgres://), `import` 段（可选） |
 
 ## Runtime/Tooling Preferences
 
@@ -140,9 +148,9 @@ Verification: clippy gate + `cargo test`; API smoke-tested via curl against a ru
 
 ## Testing & QA
 
-- Unit tests live next to the logic they cover (`#[cfg(test)]` in order.rs / sort.rs / sort_dir.rs / service.rs / error.rs): query-param parsing whitelists, validation rules, seeded shuffle determinism/permutation, error→status mapping.
+- Unit tests live next to the logic they cover (`#[cfg(test)]` in order.rs / sort.rs / sort_dir.rs / service.rs / error.rs / import.rs): query-param parsing whitelists, validation rules, seeded shuffle determinism/permutation, error→status mapping, 导入行号/分组/标签解析（prepare_rows/group_rows/parse_tags）。
 - ts-rs export tests (`export_bindings_*`) regenerate `frontend/src/generated/` on every `cargo test`; commit the generated files alongside DTO changes.
-- No integration test suite yet. QA approach: `cargo clippy --workspace --all-targets --all-features -- -D warnings` + `cargo test --workspace` + `cargo build` + `npm run build` must pass; API smoke-tested via curl against a running server (create wordbook → add words → paginate → update → delete → verify cascade with `sqlite3 data/quan_word.db 'SELECT count(*) FROM word;'`); UI verified manually/browser-driven (cover toggle, drag/zone/keyboard page turns, settings sliders, responsive columns 2/3/4/5 by breakpoint).
-- When changing pagination: remember API pages are 1-based but `fetch_page` is 0-based.
+- No integration test suite yet. QA approach: `cargo clippy --workspace --all-targets --all-features -- -D warnings` + `cargo test --workspace` + `cargo build` + `npm run build` must pass; API smoke-tested via curl against a running server (create wordbook → add words → paginate → update → delete → verify cascade with `sqlite3 data/quan_word.db 'SELECT count(*) FROM word;'`; 导入冒烟：preview（含标签/重复/错误行的 6 列 csv，断言 total/valid/invalid/duplicate 统计与行号）→ import/rows（修正错误行后统计刷新、翻页/筛选）→ import（断言 imported/updated/skipped_*/created_tags）→ 查询确认标签关联与义项合并)；UI verified manually/browser-driven (cover toggle, drag/zone/keyboard page turns, settings sliders, responsive columns 2/3/4/5 by breakpoint, 导入预览分组卡片编辑/筛选/翻页)。
+- When changing pagination: remember API pages are 1-based but `fetch_page` is 0-based. 导入分页按组切（组不跨页），`page_size` clamp 1..=100。
 - When changing schema: add a migration (chronological `mYYYYMMDD_*` file, registered in `crates/migration/src/lib.rs`), and verify BOTH sqlite (default) and postgres (config.example.yaml URL + local `postgres:17` container, e.g. `-p 5433:5432` if a local PG occupies 5432).
-- When changing DTOs: rerun `cargo test` to refresh ts-rs output, then `npm run build` to verify frontend type alignment; contract types in `frontend/src/generated/` are the source of truth.
+- When changing DTOs: rerun `cargo test` to refresh ts-rs output, then `npm run build` to verify frontend type alignment; contract types in `frontend/src/generated/` are the source of truth. ts-rs 只生成不删除——DTO 删除后手动清理对应 `frontend/src/generated/*.ts` 孤儿文件。
