@@ -118,7 +118,9 @@ mod tests {
             .header("content-type", "application/json")
             .body(Body::from("{invalid json"))
             .unwrap();
-        let rejection = Json::<serde_json::Value>::from_request(req, &()).await.unwrap_err();
+        let rejection = Json::<serde_json::Value>::from_request(req, &())
+            .await
+            .unwrap_err();
         let resp = ApiError::invalid_json(rejection).into_response();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
@@ -132,7 +134,9 @@ mod tests {
             .uri("/")
             .body(Body::from("{\"a\":1}"))
             .unwrap();
-        let rejection = Json::<serde_json::Value>::from_request(req, &()).await.unwrap_err();
+        let rejection = Json::<serde_json::Value>::from_request(req, &())
+            .await
+            .unwrap_err();
         let resp = ApiError::invalid_json(rejection).into_response();
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();

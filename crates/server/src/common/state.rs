@@ -6,20 +6,22 @@ use parking_lot::Mutex;
 use sea_orm::DatabaseConnection;
 
 use crate::business::wordbooks::dto::resp::WordbookResp;
+use crate::business::wordbooks::words::dto::import::ImportRowData;
+use crate::business::wordbooks::words::tag_match::TagMatch;
 use crate::config::Config;
 
 /// 洗牌序列缓存上限（条）：超出后整体清空，避免缓存无限增长。
 pub const SHUFFLE_CACHE_CAP: usize = 8;
 
 /// random 打乱序列缓存条目：(book_id, 筛选标签 ids, 匹配模式, seed) → 洗牌后的完整 id 序列
-/// （tag_ids 已排序去重；空 = 不筛选；匹配模式为 "and"/"or" 字符串，common 不依赖 business 类型）
-type ShuffleCache = Arc<Mutex<HashMap<(i32, Vec<i32>, String, String), Vec<i32>>>>;
+/// （tag_ids 已排序去重；空 = 不筛选；匹配模式直接用业务枚举 `TagMatch`，不做字符串降级）
+type ShuffleCache = Arc<Mutex<HashMap<(i32, Vec<i32>, TagMatch, String), Vec<i32>>>>;
 
-/// 导入预览会话条目：token → (book_id, 行数据 JSON 载荷)。
-/// rows 为 `Vec<ImportRowData>` 的 serde_json 编码；common 不依赖 business DTO，故用载荷。
+/// 导入预览会话条目：token → (book_id, 全量行数据)。
+/// rows 为 typed `ImportRowData`（Arc 共享避免拷贝；跨请求边界的缓存不中继序列化字节）。
 pub struct ImportCacheEntry {
     pub book_id: i32,
-    pub rows: Arc<[u8]>,
+    pub rows: Arc<Vec<ImportRowData>>,
     pub created_at: Instant,
 }
 

@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::business::wordbooks::words::import_filter::{deserialize_filter, ImportFilter};
+
 /// 批量导入响应体。
 #[derive(Debug, Serialize, TS)]
 #[ts(export, export_to = "ImportResp.ts")]
@@ -120,16 +122,12 @@ pub struct ImportRowsReq {
     /// 页大小（1..=100）
     #[ts(type = "number")]
     pub page_size: u64,
-    /// 筛选：all | error | duplicate
-    #[serde(default = "default_filter")]
-    pub filter: String,
+    /// 筛选：all | error | duplicate（缺省 all）
+    #[serde(default, deserialize_with = "deserialize_filter")]
+    pub filter: ImportFilter,
     /// 行级修正（编辑草稿，覆盖对应行号后重新校验；空 = 纯翻页/筛选）
     #[serde(default)]
     pub updates: Vec<ImportRowData>,
-}
-
-fn default_filter() -> String {
-    "all".to_string()
 }
 
 /// 行分页响应：与预览一致但无 token（会话凭据由请求方持有）。

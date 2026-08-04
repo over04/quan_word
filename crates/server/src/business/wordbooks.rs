@@ -8,4 +8,4 @@ mod repo;
 pub mod router;
 mod service;
 mod tags;
-mod words;
+pub mod words;

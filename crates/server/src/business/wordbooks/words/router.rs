@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use axum::{
     extract::{DefaultBodyLimit, Multipart, Query, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
@@ -25,6 +27,7 @@ use super::service::WordService;
 use super::sort::SortField;
 use super::sort_dir::SortDir;
 use super::tag_match::TagMatch;
+use super::template_format::TemplateFormat;
 use crate::common::error::ApiError;
 use crate::common::http::{json::ApiJson, path::ApiPath};
 use crate::common::model::page::PageResp;
@@ -83,7 +86,10 @@ pub async fn list_words(
     let tag_ids = WordService::parse_tag_ids(query.tag.as_deref())?;
     let tag_match = TagMatch::parse(query.tag_match.as_deref().unwrap_or("and"))?;
     Ok(Json(
-        WordService::list(&state, book_id, page, page_size, &order, tag_match, &tag_ids).await?,
+        WordService::list(
+            &state, book_id, page, page_size, &order, tag_match, &tag_ids,
+        )
+        .await?,
     ))
 }
 
@@ -150,9 +156,13 @@ pub async fn download_template(
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
     // 校验单词书存在（404 提示更友好）
     WordService::book_exists(&state, book_id).await?;
-    let format = query.format.as_deref().unwrap_or("csv");
+    let format = match query.format.as_deref() {
+        None => TemplateFormat::Csv,
+        Some(s) => TemplateFormat::from_str(s)
+            .map_err(|_| WordError::UnsupportedFormat { ext: s.to_string() })?,
+    };
     match format {
-        "csv" => {
+        TemplateFormat::Csv => {
             let body = WordService::template_csv();
             let mut headers = HeaderMap::new();
             headers.insert(
@@ -165,7 +175,7 @@ pub async fn download_template(
             );
             Ok((headers, body))
         }
-        "xlsx" => {
+        TemplateFormat::Xlsx => {
             let body = WordService::template_xlsx()?;
             let mut headers = HeaderMap::new();
             headers.insert(
@@ -180,9 +190,6 @@ pub async fn download_template(
             );
             Ok((headers, body))
         }
-        other => Err(ApiError::from(WordError::UnsupportedFormat {
-            ext: other.to_string(),
-        })),
     }
 }
 
@@ -222,9 +229,7 @@ pub async fn import_words(
     ApiPath(book_id): ApiPath<i32>,
     ApiJson(req): ApiJson<ImportExecReq>,
 ) -> Result<Json<ImportResp>, ApiError> {
-    Ok(Json(
-        WordService::import_words(&state, book_id, req).await?,
-    ))
+    Ok(Json(WordService::import_words(&state, book_id, req).await?))
 }
 
 /// 从 multipart 提取 file 字段（两导入接口共用）。

@@ -29,10 +29,7 @@ where
 {
     type Rejection = ApiError;
 
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &S,
-    ) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         let Path(value) = Path::<T>::from_request_parts(parts, state)
             .await
             .map_err(ApiError::invalid_path)?;

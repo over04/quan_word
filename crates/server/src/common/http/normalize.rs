@@ -60,12 +60,11 @@ mod tests {
         Router::new()
             .route(
                 "/plain",
-                axum::routing::get(|| async { (StatusCode::BAD_REQUEST, "纯文本错误").into_response() }),
+                axum::routing::get(|| async {
+                    (StatusCode::BAD_REQUEST, "纯文本错误").into_response()
+                }),
             )
-            .route(
-                "/method",
-                axum::routing::get(|| async {}),
-            )
+            .route("/method", axum::routing::get(|| async {}))
             .fallback(|| async { (StatusCode::NOT_FOUND, "Not Found").into_response() })
             .layer(axum::middleware::from_fn(normalize_error))
             .with_state(())
@@ -76,12 +75,10 @@ mod tests {
 
     #[tokio::test]
     async fn wraps_plain_text_4xx() {
-        let resp = run(
-            Request::builder()
-                .uri("/plain")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        let resp = run(Request::builder()
+            .uri("/plain")
+            .body(Body::empty())
+            .unwrap())
         .await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
@@ -91,13 +88,11 @@ mod tests {
 
     #[tokio::test]
     async fn wraps_method_not_allowed() {
-        let resp = run(
-            Request::builder()
-                .uri("/method")
-                .method("POST")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        let resp = run(Request::builder()
+            .uri("/method")
+            .method("POST")
+            .body(Body::empty())
+            .unwrap())
         .await;
         assert_eq!(resp.status(), StatusCode::METHOD_NOT_ALLOWED);
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
@@ -107,13 +102,7 @@ mod tests {
 
     #[tokio::test]
     async fn wraps_fallback_not_found() {
-        let resp = run(
-            Request::builder()
-                .uri("/nope")
-                .body(Body::empty())
-                .unwrap(),
-        )
-        .await;
+        let resp = run(Request::builder().uri("/nope").body(Body::empty()).unwrap()).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
@@ -122,12 +111,10 @@ mod tests {
 
     #[tokio::test]
     async fn leaves_success_responses_untouched() {
-        let resp = run(
-            Request::builder()
-                .uri("/method")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        let resp = run(Request::builder()
+            .uri("/method")
+            .body(Body::empty())
+            .unwrap())
         .await;
         assert_eq!(resp.status(), StatusCode::OK);
     }

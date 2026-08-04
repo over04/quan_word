@@ -16,15 +16,9 @@ pub enum TagMatch {
 
 impl TagMatch {
     pub fn parse(s: &str) -> Result<Self, WordError> {
-        Self::from_str(s).map_err(|_| WordError::InvalidTagMatch { mode: s.to_string() })
-    }
-
-    /// 洗牌缓存 key 分量（common 层不依赖 business 类型，key 用字符串表示模式）。
-    pub fn cache_code(self) -> &'static str {
-        match self {
-            TagMatch::And => "and",
-            TagMatch::Or => "or",
-        }
+        Self::from_str(s).map_err(|_| WordError::InvalidTagMatch {
+            mode: s.to_string(),
+        })
     }
 }
 

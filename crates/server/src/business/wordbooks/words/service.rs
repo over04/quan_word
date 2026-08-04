@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
@@ -19,8 +21,11 @@ use super::dto::resp::WordResp;
 use super::dto::update::UpdateWordReq;
 use super::dto::update_tags::UpdateWordTagsReq;
 use super::error::WordError;
+use super::file_type::ImportFileType;
 use super::import;
+use super::import_filter::ImportFilter;
 use super::order::WordOrder;
+use super::pos::WordPos;
 use super::repo::WordRepo;
 use super::sort::SortField;
 use super::sort_dir::SortDir;
@@ -43,11 +48,11 @@ fn new_import_token() -> String {
 
 /// 导入解析中间结果（预览与执行共用）。
 struct ImportPlan {
-    groups: Vec<import::WordGroup>,     // 按拼写合并后的单词
-    errors: Vec<(usize, String)>,       // 行错误（行号升序）
-    new_tags: Vec<String>,              // 缺失标签名（跨组去重，保持出现顺序）
+    groups: Vec<import::WordGroup>, // 按拼写合并后的单词
+    errors: Vec<(usize, String)>,   // 行错误（行号升序）
+    new_tags: Vec<String>,          // 缺失标签名（跨组去重，保持出现顺序）
     existing_tags: u64,
-    duplicates: Vec<(usize, String)>,   // 重复组（组首行行号, 拼写）
+    duplicates: Vec<(usize, String)>, // 重复组（组首行行号, 拼写）
 }
 
 /// 单词业务逻辑：分页查询（含排序/打乱）/ 搜索查询 / 创建 / 更新 / 删除。
@@ -113,12 +118,13 @@ impl WordService {
             WordOrder::Random(seed) => {
                 // 洗牌序列缓存：(book_id, 筛选标签 ids, 匹配模式, seed) → 完整 id 序列，避免每页请求重复全量洗牌
                 // 注意：锁 guard 立即 drop，禁止跨 await 持有（parking_lot guard 非 Send）
-                let key = (book_id, tag_ids.to_vec(), tag_match.cache_code().to_owned(), seed.clone());
+                let key = (book_id, tag_ids.to_vec(), tag_match, seed.clone());
                 let cached = state.shuffle_cache.lock().get(&key).cloned();
                 let ordered = match cached {
                     Some(v) => v,
                     None => {
-                        let mut ordered = WordRepo::find_all_ids(db, book_id, tag_ids, tag_match).await?;
+                        let mut ordered =
+                            WordRepo::find_all_ids(db, book_id, tag_ids, tag_match).await?;
                         Self::seeded_shuffle(&mut ordered, seed);
                         let mut m = state.shuffle_cache.lock();
                         if m.len() >= SHUFFLE_CACHE_CAP {
@@ -168,9 +174,10 @@ impl WordService {
         let db = state.db.as_ref();
         Self::ensure_book_exists(db, book_id).await?;
         let q = q.as_deref().map(str::trim).filter(|s| !s.is_empty());
-        let (models, total) =
-            WordRepo::search_page(db, book_id, q, field, dir, page, page_size, tag_ids, tag_match)
-                .await?;
+        let (models, total) = WordRepo::search_page(
+            db, book_id, q, field, dir, page, page_size, tag_ids, tag_match,
+        )
+        .await?;
         Self::to_page_with_tags(db, models, total, page, page_size).await
     }
 
@@ -317,7 +324,9 @@ impl WordService {
             .and_then(|e| e.to_str())
             .unwrap_or_default()
             .to_string();
-        let rows = import::parse_file(&bytes, &ext, state.config.import.max_rows)?;
+        let file_type =
+            ImportFileType::from_str(&ext).map_err(|_| WordError::UnsupportedFormat { ext })?;
+        let rows = import::parse_file(&bytes, file_type, state.config.import.max_rows)?;
         let (views, total, invalid, dup_total, dup_groups, new_tags, existing_tags) =
             Self::build_views(state, book_id, &rows).await?;
         let (page_rows, total_pages) = Self::page_groups(views, page, page_size);
@@ -326,9 +335,7 @@ impl WordService {
         let dto_rows: Vec<ImportRowData> = rows.iter().map(|r| r.to_dto()).collect();
         let mut m = state.import_cache.lock();
         m.retain(|_, e| {
-            e.created_at
-                .elapsed()
-                < Duration::from_secs(state.config.import.cache_ttl_secs)
+            e.created_at.elapsed() < Duration::from_secs(state.config.import.cache_ttl_secs)
         });
         if m.len() >= state.config.import.cache_cap {
             m.clear();
@@ -337,7 +344,7 @@ impl WordService {
             token.clone(),
             ImportCacheEntry {
                 book_id,
-                rows: serde_json::to_vec(&dto_rows)?.into(),
+                rows: Arc::new(dto_rows),
                 created_at: Instant::now(),
             },
         );
@@ -379,11 +386,7 @@ impl WordService {
         let plan = Self::build_import_plan(state, book_id, rows).await?;
         let err_map: HashMap<usize, String> = plan.errors.into_iter().collect();
         let dup_first: HashSet<usize> = plan.duplicates.iter().map(|(r, _)| *r).collect();
-        let dup_groups: Vec<u64> = plan
-            .duplicates
-            .iter()
-            .map(|(r, _)| *r as u64)
-            .collect();
+        let dup_groups: Vec<u64> = plan.duplicates.iter().map(|(r, _)| *r as u64).collect();
         let mut group_map: HashMap<usize, usize> = HashMap::new(); // 行号 → 组首行号
         for g in &plan.groups {
             let first = g.row_nos[0];
@@ -425,7 +428,11 @@ impl WordService {
     }
 
     /// 按组切片（组不跨页，页序 = 组序）：返回（当前页展开行, 总页数）。
-    fn page_groups(views: Vec<ImportRowView>, page: u64, page_size: u64) -> (Vec<ImportRowView>, u64) {
+    fn page_groups(
+        views: Vec<ImportRowView>,
+        page: u64,
+        page_size: u64,
+    ) -> (Vec<ImportRowView>, u64) {
         let mut group_idx: HashMap<u64, usize> = HashMap::new();
         let mut groups: Vec<Vec<ImportRowView>> = Vec::new();
         for v in views {
@@ -466,32 +473,27 @@ impl WordService {
                 Some(e) if e.book_id == book_id && e.created_at.elapsed() < ttl => e,
                 _ => return Err(WordError::ImportSessionInvalid),
             };
-            let mut dto_rows: Vec<ImportRowData> = serde_json::from_slice(&entry.rows)?;
+            // Arc 独占（缓存条目唯一持有）时零拷贝原地修改；出锁返回 clone
+            let rows = Arc::make_mut(&mut entry.rows);
             for fix in &req.updates {
                 // 行号 < 2 不可能指向数据行，显式忽略（防 usize 减法下溢 panic）
                 if fix.row < 2 {
                     continue;
                 }
                 let idx = fix.row as usize - 2;
-                if let Some(r) = dto_rows.get_mut(idx) {
+                if let Some(r) = rows.get_mut(idx) {
                     *r = fix.clone();
                 }
             }
-            entry.rows = serde_json::to_vec(&dto_rows)?.into();
-            dto_rows
+            rows.clone()
         };
         let rows: Vec<import::RowData> = dto_rows.iter().map(import::RowData::from_dto).collect();
         let (views, total, invalid, dup_total, dup_groups, new_tags, existing_tags) =
             Self::build_views(state, book_id, &rows).await?;
-        let filtered: Vec<ImportRowView> = match req.filter.as_str() {
-            "all" => views,
-            "error" => views.into_iter().filter(|r| r.error.is_some()).collect(),
-            "duplicate" => views.into_iter().filter(|r| r.is_duplicate).collect(),
-            other => {
-                return Err(WordError::InvalidImportFilter {
-                    filter: other.into(),
-                });
-            }
+        let filtered: Vec<ImportRowView> = match req.filter {
+            ImportFilter::All => views,
+            ImportFilter::Error => views.into_iter().filter(|r| r.error.is_some()).collect(),
+            ImportFilter::Duplicate => views.into_iter().filter(|r| r.is_duplicate).collect(),
         };
         // 按组切片：组不跨页（前端按组卡片展示），页序 = 组序
         let (page_rows, total_pages) = Self::page_groups(filtered, page, page_size);
@@ -528,11 +530,8 @@ impl WordService {
             Some(e) if e.book_id == book_id && e.created_at.elapsed() < ttl => e,
             _ => return Err(WordError::ImportSessionInvalid),
         };
-        let dto_rows: Vec<ImportRowData> = serde_json::from_slice(&entry.rows)?;
-        let rows: Vec<import::RowData> = dto_rows
-            .iter()
-            .map(import::RowData::from_dto)
-            .collect();
+        let dto_rows: Vec<ImportRowData> = entry.rows.to_vec();
+        let rows: Vec<import::RowData> = dto_rows.iter().map(import::RowData::from_dto).collect();
         let plan = Self::build_import_plan(state, book_id, &rows).await?;
         if plan.groups.is_empty() {
             return Ok(ImportResp {
@@ -741,7 +740,14 @@ impl WordService {
             .set_font_color("FFFFFF");
         let mut sheet = Worksheet::new();
         sheet.set_name("单词模板").map_err(err)?;
-        for (col, width) in [(0u16, 20.0), (1, 20.0), (2, 10.0), (3, 40.0), (4, 40.0), (5, 20.0)] {
+        for (col, width) in [
+            (0u16, 20.0),
+            (1, 20.0),
+            (2, 10.0),
+            (3, 40.0),
+            (4, 40.0),
+            (5, 20.0),
+        ] {
             sheet.set_column_width(col, width).map_err(err)?;
         }
         sheet.set_row_height(0, 22.0).map_err(err)?;
@@ -872,14 +878,10 @@ impl WordService {
         if definitions.iter().any(|d| d.meaning.trim().is_empty()) {
             return Err(WordError::EmptyMeaning);
         }
-        // 词性必须是合法枚举（与前端下拉一致）或为空
-        const VALID_POS: [&str; 21] = [
-            "n.", "c", "C", "u", "U", "cu", "CU", "v.", "vt.", "vi.", "adj.", "adv.",
-            "prep.", "conj.", "pron.", "num.", "art.", "interj.", "aux.", "abbr.", "phr.",
-        ];
+        // 词性必须是合法枚举（与前端下拉一致）或为空；白名单由 `WordPos` 声明
         if let Some(bad) = definitions
             .iter()
-            .find(|d| !d.pos.trim().is_empty() && !VALID_POS.contains(&d.pos.trim()))
+            .find(|d| !d.pos.trim().is_empty() && WordPos::from_str(d.pos.trim()).is_err())
         {
             return Err(WordError::InvalidPos {
                 pos: bad.pos.clone(),

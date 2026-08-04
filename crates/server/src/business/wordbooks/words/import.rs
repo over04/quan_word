@@ -13,6 +13,7 @@ use entity::definition::Definition;
 
 use super::dto::import::ImportRowData;
 use super::error::WordError;
+use super::file_type::ImportFileType;
 use super::service::WordService;
 
 /// 模板表头（csv 输出与各解析器跳过首行的依据）。
@@ -68,39 +69,42 @@ impl RowData {
     }
 }
 
-/// 按扩展名解析文件为行数据。结构性失败（损坏/编码不支持）返回单条 ImportFailed 明细。
+/// 按文件类型解析为行数据。结构性失败（损坏/编码不支持）返回单条 ImportFailed 明细。
 /// 数据行数超过 `max_rows` 时返回 TooManyRows。
-pub fn parse_file(bytes: &[u8], ext: &str, max_rows: usize) -> Result<Vec<RowData>, WordError> {
-    match ext.to_ascii_lowercase().as_str() {
-        "csv" => parse_csv(bytes, max_rows),
-        "xlsx" => parse_spreadsheet::<calamine::Xlsx<_>>(bytes, max_rows),
-        "xls" => parse_spreadsheet::<calamine::Xls<_>>(bytes, max_rows),
-        "ods" => parse_spreadsheet::<calamine::Ods<_>>(bytes, max_rows),
-        _ => Err(WordError::UnsupportedFormat { ext: ext.into() }),
+pub fn parse_file(
+    bytes: &[u8],
+    file_type: ImportFileType,
+    max_rows: usize,
+) -> Result<Vec<RowData>, WordError> {
+    match file_type {
+        ImportFileType::Csv => parse_csv(bytes, max_rows),
+        ImportFileType::Xlsx => parse_spreadsheet::<calamine::Xlsx<_>>(bytes, max_rows),
+        ImportFileType::Xls => parse_spreadsheet::<calamine::Xls<_>>(bytes, max_rows),
+        ImportFileType::Ods => parse_spreadsheet::<calamine::Ods<_>>(bytes, max_rows),
     }
 }
 
 /// 已通过行级校验的导入行（每行 = 一个词性/释义义项）。
 #[derive(Debug)]
 pub struct PreparedRow {
-    pub row_no: usize,                  // 文件行号（从 2 起）
-    pub spelling: String,               // 已 trim
+    pub row_no: usize,    // 文件行号（从 2 起）
+    pub spelling: String, // 已 trim
     pub phonetic: Option<String>,
-    pub pos: String,                    // 该义项词性（已 trim；允许空）
-    pub meaning: String,                // 该义项释义（已 trim）
+    pub pos: String,     // 该义项词性（已 trim；允许空）
+    pub meaning: String, // 该义项释义（已 trim）
     pub example: Option<String>,
-    pub tag_names: Vec<String>,         // parse_tags 结果（已 trim/去重）
+    pub tag_names: Vec<String>, // parse_tags 结果（已 trim/去重）
 }
 
 /// 按拼写合并后的单词（组内全部义项 + 组级字段）。
 #[derive(Debug)]
 pub struct WordGroup {
-    pub row_nos: Vec<usize>,            // 组内行号（升序）
-    pub spelling: String,               // 已 trim
-    pub phonetic: Option<String>,       // 组内首个非空
-    pub example: Option<String>,        // 组内首个非空
-    pub tag_names: Vec<String>,         // 组内并集（去重，出现顺序）
-    pub definitions: Vec<Definition>,   // 按行序 (pos, meaning)
+    pub row_nos: Vec<usize>,          // 组内行号（升序）
+    pub spelling: String,             // 已 trim
+    pub phonetic: Option<String>,     // 组内首个非空
+    pub example: Option<String>,      // 组内首个非空
+    pub tag_names: Vec<String>,       // 组内并集（去重，出现顺序）
+    pub definitions: Vec<Definition>, // 按行序 (pos, meaning)
 }
 
 /// 逐行校验并分类：返回（有效行，错误明细）。容错：错误行跳过，有效行照常产出。
@@ -127,10 +131,13 @@ pub fn prepare_rows(rows: &[RowData]) -> (Vec<PreparedRow>, Vec<(usize, String)>
             continue;
         }
         let pos = row.pos.trim();
-        if let Err(e) = WordService::validate(spelling, &[Definition {
-            pos: pos.to_string(),
-            meaning: meaning.to_string(),
-        }]) {
+        if let Err(e) = WordService::validate(
+            spelling,
+            &[Definition {
+                pos: pos.to_string(),
+                meaning: meaning.to_string(),
+            }],
+        ) {
             errors.push((line, e.to_string()));
             continue;
         }
@@ -322,9 +329,7 @@ fn parse_error(details: String) -> WordError {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        group_rows, parse_csv, parse_tags, prepare_rows, PreparedRow, RowData, HEADERS,
-    };
+    use super::{group_rows, parse_csv, parse_tags, prepare_rows, PreparedRow, RowData, HEADERS};
     use crate::business::wordbooks::words::error::WordError;
 
     #[test]
@@ -457,19 +462,16 @@ mod tests {
         assert_eq!(groups[0].row_nos, vec![2, 3]);
         assert_eq!(groups[0].phonetic.as_deref(), Some("/æpl/"));
         assert_eq!(groups[0].example.as_deref(), Some("Don't apple."));
-        assert_eq!(groups[0].tag_names, vec!["水果".to_string(), "高频".to_string()]);
+        assert_eq!(
+            groups[0].tag_names,
+            vec!["水果".to_string(), "高频".to_string()]
+        );
         assert_eq!(groups[0].definitions.len(), 2);
         assert_eq!(groups[0].definitions[0].pos, "n.");
         assert_eq!(groups[0].definitions[0].meaning, "苹果");
         assert_eq!(groups[0].definitions[1].pos, "v.");
         assert_eq!(groups[1].spelling, "banana");
         assert_eq!(groups[1].definitions.len(), 1);
-    }
-
-    #[test]
-    fn rejects_unknown_extension() {
-        let err = super::parse_file(b"", "pdf", 5000).unwrap_err();
-        assert!(matches!(err, WordError::UnsupportedFormat { .. }));
     }
 
     #[test]

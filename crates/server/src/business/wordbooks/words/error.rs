@@ -43,8 +43,6 @@ pub enum WordError {
     UnsupportedFormat { ext: String },
     #[error("导入会话无效或已过期，请重新上传文件预览")]
     ImportSessionInvalid,
-    #[error("不支持的导入筛选: {filter}，可选：all / error / duplicate")]
-    InvalidImportFilter { filter: String },
     #[error("导入失败：共 {count} 行有误\n{details}")]
     ImportFailed { count: usize, details: String },
     #[error("导入行数超过上限（{limit} 行）")]

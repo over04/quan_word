@@ -30,10 +30,9 @@ where
     type Rejection = ApiError;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        let Json(value) =
-            Json::<T>::from_request(req, state)
-                .await
-                .map_err(ApiError::invalid_json)?;
+        let Json(value) = Json::<T>::from_request(req, state)
+            .await
+            .map_err(ApiError::invalid_json)?;
         Ok(Self(value))
     }
 }
