@@ -10,4 +10,6 @@ pub struct SearchWordsQuery {
     pub order: Option<String>,
     /// 标签筛选（逗号分隔的标签 id，多选交集）
     pub tag: Option<String>,
+    /// 标签匹配模式：and=交集（默认）/ or=并集
+    pub tag_match: Option<String>,
 }

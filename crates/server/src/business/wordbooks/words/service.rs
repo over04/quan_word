@@ -24,6 +24,7 @@ use super::order::WordOrder;
 use super::repo::WordRepo;
 use super::sort::SortField;
 use super::sort_dir::SortDir;
+use super::tag_match::TagMatch;
 use crate::common::model::page::PageResp;
 use crate::common::state::{AppState, ImportCacheEntry, SHUFFLE_CACHE_CAP};
 
@@ -59,6 +60,7 @@ impl WordService {
         page: u64,
         page_size: u64,
         order: &WordOrder,
+        tag_match: TagMatch,
         tag_ids: &[i32],
     ) -> Result<PageResp<WordResp>, WordError> {
         let db = state.db.as_ref();
@@ -74,6 +76,7 @@ impl WordService {
                     page,
                     page_size,
                     tag_ids,
+                    tag_match,
                 )
                 .await?;
                 Self::to_page_with_tags(db, models, total, page, page_size).await
@@ -87,6 +90,7 @@ impl WordService {
                     page,
                     page_size,
                     tag_ids,
+                    tag_match,
                 )
                 .await?;
                 Self::to_page_with_tags(db, models, total, page, page_size).await
@@ -100,20 +104,21 @@ impl WordService {
                     page,
                     page_size,
                     tag_ids,
+                    tag_match,
                 )
                 .await?;
                 Self::to_page_with_tags(db, models, total, page, page_size).await
             }
             // 打乱：全量 id 按 seed 确定性洗牌（跨库一致），按页取 id 切片后查单词
             WordOrder::Random(seed) => {
-                // 洗牌序列缓存：(book_id, 筛选标签 ids, seed) → 完整 id 序列，避免每页请求重复全量洗牌
+                // 洗牌序列缓存：(book_id, 筛选标签 ids, 匹配模式, seed) → 完整 id 序列，避免每页请求重复全量洗牌
                 // 注意：锁 guard 立即 drop，禁止跨 await 持有（parking_lot guard 非 Send）
-                let key = (book_id, tag_ids.to_vec(), seed.clone());
+                let key = (book_id, tag_ids.to_vec(), tag_match.cache_code().to_owned(), seed.clone());
                 let cached = state.shuffle_cache.lock().get(&key).cloned();
                 let ordered = match cached {
                     Some(v) => v,
                     None => {
-                        let mut ordered = WordRepo::find_all_ids(db, book_id, tag_ids).await?;
+                        let mut ordered = WordRepo::find_all_ids(db, book_id, tag_ids, tag_match).await?;
                         Self::seeded_shuffle(&mut ordered, seed);
                         let mut m = state.shuffle_cache.lock();
                         if m.len() >= SHUFFLE_CACHE_CAP {
@@ -147,7 +152,7 @@ impl WordService {
         }
     }
 
-    /// 列表模式查询：书内搜索（拼写/释义模糊匹配）+ 白名单排序 + 标签交集筛选 + 分页。
+    /// 列表模式查询：书内搜索（拼写/释义模糊匹配）+ 白名单排序 + 标签筛选（交集/并集）+ 分页。
     #[allow(clippy::too_many_arguments)]
     pub async fn query(
         state: &AppState,
@@ -157,13 +162,15 @@ impl WordService {
         dir: SortDir,
         page: u64,
         page_size: u64,
+        tag_match: TagMatch,
         tag_ids: &[i32],
     ) -> Result<PageResp<WordResp>, WordError> {
         let db = state.db.as_ref();
         Self::ensure_book_exists(db, book_id).await?;
         let q = q.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let (models, total) =
-            WordRepo::search_page(db, book_id, q, field, dir, page, page_size, tag_ids).await?;
+            WordRepo::search_page(db, book_id, q, field, dir, page, page_size, tag_ids, tag_match)
+                .await?;
         Self::to_page_with_tags(db, models, total, page, page_size).await
     }
 

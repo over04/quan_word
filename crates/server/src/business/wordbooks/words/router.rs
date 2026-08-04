@@ -24,6 +24,7 @@ use super::order::WordOrder;
 use super::service::WordService;
 use super::sort::SortField;
 use super::sort_dir::SortDir;
+use super::tag_match::TagMatch;
 use crate::common::error::ApiError;
 use crate::common::http::{json::ApiJson, path::ApiPath};
 use crate::common::model::page::PageResp;
@@ -80,8 +81,9 @@ pub async fn list_words(
     let (page, page_size) = parse_paging(query.page.as_deref(), query.page_size.as_deref())?;
     let order = WordOrder::parse(query.order.as_deref(), query.seed.as_deref())?;
     let tag_ids = WordService::parse_tag_ids(query.tag.as_deref())?;
+    let tag_match = TagMatch::parse(query.tag_match.as_deref().unwrap_or("and"))?;
     Ok(Json(
-        WordService::list(&state, book_id, page, page_size, &order, &tag_ids).await?,
+        WordService::list(&state, book_id, page, page_size, &order, tag_match, &tag_ids).await?,
     ))
 }
 
@@ -95,9 +97,10 @@ pub async fn query_words(
     let field = SortField::parse(query.sort.as_deref().unwrap_or("created_at"))?;
     let dir = SortDir::parse(query.order.as_deref().unwrap_or("asc"))?;
     let tag_ids = WordService::parse_tag_ids(query.tag.as_deref())?;
+    let tag_match = TagMatch::parse(query.tag_match.as_deref().unwrap_or("and"))?;
     Ok(Json(
         WordService::query(
-            &state, book_id, query.q, field, dir, page, page_size, &tag_ids,
+            &state, book_id, query.q, field, dir, page, page_size, tag_match, &tag_ids,
         )
         .await?,
     ))

@@ -24,6 +24,8 @@ interface Props {
   tags: Tag[]
   /** 当前标签筛选（多选交集） */
   tagIds: number[]
+  /** 标签匹配模式：and=全部匹配（默认）/ or=任一匹配 */
+  tagMatch: 'and' | 'or'
   /** 打开标签管理弹窗 */
   onManageTags: () => void
   /** 新建标签成功后回调（父级刷新标签列表） */
@@ -56,6 +58,7 @@ export default function WordTable({
   onMutated,
   tags,
   tagIds,
+  tagMatch,
   onManageTags,
   onTagsCreated,
 }: Props) {
@@ -73,8 +76,8 @@ export default function WordTable({
   const [importOpen, setImportOpen] = useState(false)
   // 批量打标签弹窗
   const [tagPickerOpen, setTagPickerOpen] = useState(false)
-  // 上次筛选（引用比较）：变化时重置页码且不发起旧页请求
-  const prevTagRef = useRef(tagIds)
+  // 上次筛选（引用/值比较）：变化时重置页码且不发起旧页请求
+  const prevTagRef = useRef<{ tagIds: number[]; tagMatch: 'and' | 'or' }>({ tagIds, tagMatch })
   // 标签 id → 名称映射（行内 chips）
   const tagName = useMemo(() => new Map(tags.map((t) => [t.id, t.name])), [tags])
 
@@ -84,10 +87,10 @@ export default function WordTable({
     return () => window.clearTimeout(t)
   }, [q])
 
-  // 查询加载：搜索词 / 排序 / 页码 / 标签筛选 / 数据变更时重新请求
+  // 查询加载：搜索词 / 排序 / 页码 / 标签筛选（含匹配模式）/ 数据变更时重新请求
   useEffect(() => {
-    if (prevTagRef.current !== tagIds) {
-      prevTagRef.current = tagIds
+    if (prevTagRef.current.tagIds !== tagIds || prevTagRef.current.tagMatch !== tagMatch) {
+      prevTagRef.current = { tagIds, tagMatch }
       if (page !== 1) {
         // 筛选变化：回到第 1 页，等待重渲染后以新筛选查询
         setPage(1)
@@ -102,6 +105,7 @@ export default function WordTable({
         sort,
         order,
         tag: tagIds.length > 0 ? tagIds.join(',') : undefined,
+        tagMatch,
       })
       .then((r) => {
         if (alive) {
@@ -115,7 +119,7 @@ export default function WordTable({
     return () => {
       alive = false
     }
-  }, [bookId, debouncedQ, sort, order, page, refreshKey, tagIds])
+  }, [bookId, debouncedQ, sort, order, page, refreshKey, tagIds, tagMatch])
 
   // 删除后当前页可能空：回退上一页
   useEffect(() => {

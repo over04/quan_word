@@ -95,23 +95,25 @@ export const wordbooks = {
 }
 
 export const words = {
-  /** 纸质书浏览：可选排序（id_asc/id_desc/spelling/random）；random 需 seed（确定性打乱）；tag 逗号分隔标签 id 交集筛选 */
-  list: (bookId: number, page: number, pageSize: number, opts?: { order?: string; seed?: string; tag?: string }) => {
+  /** 纸质书浏览：可选排序（id_asc/id_desc/spelling/random）；random 需 seed（确定性打乱）；tag 逗号分隔标签 id；tagMatch: and=全部匹配（默认）/ or=任一匹配 */
+  list: (bookId: number, page: number, pageSize: number, opts?: { order?: string; seed?: string; tag?: string; tagMatch?: 'and' | 'or' }) => {
     const order = opts?.order ? `&order=${encodeURIComponent(opts.order)}` : ''
     const seed = opts?.seed ? `&seed=${encodeURIComponent(opts.seed)}` : ''
     const tag = opts?.tag ? `&tag=${encodeURIComponent(opts.tag)}` : ''
+    const tagMatch = opts?.tag && opts.tagMatch ? `&tag_match=${encodeURIComponent(opts.tagMatch)}` : ''
     return api<Page<Word>>(
-      `/api/wordbooks/${bookId}/words?page=${page}&page_size=${pageSize}${order}${seed}${tag}`,
+      `/api/wordbooks/${bookId}/words?page=${page}&page_size=${pageSize}${order}${seed}${tag}${tagMatch}`,
     )
   },
-  /** 列表模式查询：书内搜索（spelling/释义）+ 排序 + 标签交集筛选 + 分页 */
-  query: (bookId: number, page: number, pageSize: number, opts?: { q?: string; sort?: string; order?: string; tag?: string }) => {
+  /** 列表模式查询：书内搜索（spelling/释义）+ 排序 + 标签筛选（tagMatch: and=全部匹配（默认）/ or=任一匹配）+ 分页 */
+  query: (bookId: number, page: number, pageSize: number, opts?: { q?: string; sort?: string; order?: string; tag?: string; tagMatch?: 'and' | 'or' }) => {
     const q = opts?.q ? `&q=${encodeURIComponent(opts.q)}` : ''
     const sort = opts?.sort ? `&sort=${encodeURIComponent(opts.sort)}` : ''
     const order = opts?.order ? `&order=${encodeURIComponent(opts.order)}` : ''
     const tag = opts?.tag ? `&tag=${encodeURIComponent(opts.tag)}` : ''
+    const tagMatch = opts?.tag && opts.tagMatch ? `&tag_match=${encodeURIComponent(opts.tagMatch)}` : ''
     return api<Page<Word>>(
-      `/api/wordbooks/${bookId}/words/query?page=${page}&page_size=${pageSize}${q}${sort}${order}${tag}`,
+      `/api/wordbooks/${bookId}/words/query?page=${page}&page_size=${pageSize}${q}${sort}${order}${tag}${tagMatch}`,
     )
   },
   create: (bookId: number, req: CreateWordReq) =>

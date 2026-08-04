@@ -10,6 +10,7 @@ use sea_orm::{
 
 use super::sort::SortField;
 use super::sort_dir::SortDir;
+use super::tag_match::TagMatch;
 
 /// 单词持久化访问：SeaORM 查询封装。
 pub struct WordRepo;
@@ -23,7 +24,8 @@ impl WordRepo {
         wordbook::Entity::find_by_id(book_id).one(db).await
     }
 
-    /// 浏览模式分页（id / 字母序，SQL 层排序）；`tag_ids` 非空时按标签交集筛选。
+    /// 浏览模式分页（id / 字母序，SQL 层排序）；`tag_ids` 非空时按标签筛选（`mode` 决定交集/并集）。
+    #[allow(clippy::too_many_arguments)]
     pub async fn browse_page(
         db: &DatabaseConnection,
         book_id: i32,
@@ -32,10 +34,12 @@ impl WordRepo {
         page: u64,
         page_size: u64,
         tag_ids: &[i32],
+        mode: TagMatch,
     ) -> Result<(Vec<word::Model>, u64), sea_orm::DbErr> {
         let mut q = Self::with_tag_filter(
             word::Entity::find().filter(word::Column::WordbookId.eq(book_id)),
             tag_ids,
+            mode,
         );
         q = match dir {
             SortDir::Asc => q.order_by_asc(column),
@@ -52,6 +56,7 @@ impl WordRepo {
         db: &DatabaseConnection,
         book_id: i32,
         tag_ids: &[i32],
+        mode: TagMatch,
     ) -> Result<Vec<i32>, sea_orm::DbErr> {
         Self::with_tag_filter(
             word::Entity::find()
@@ -59,6 +64,7 @@ impl WordRepo {
                 .column(word::Column::Id)
                 .filter(word::Column::WordbookId.eq(book_id)),
             tag_ids,
+            mode,
         )
         .into_tuple()
         .all(db)
@@ -78,7 +84,7 @@ impl WordRepo {
             .await
     }
 
-    /// 列表模式查询：书内搜索（拼写/释义模糊匹配）+ 排序 + 标签交集筛选 + 分页。
+    /// 列表模式查询：书内搜索（拼写/释义模糊匹配）+ 排序 + 标签筛选 + 分页。
     #[allow(clippy::too_many_arguments)]
     pub async fn search_page(
         db: &DatabaseConnection,
@@ -89,10 +95,12 @@ impl WordRepo {
         page: u64,
         page_size: u64,
         tag_ids: &[i32],
+        mode: TagMatch,
     ) -> Result<(Vec<word::Model>, u64), sea_orm::DbErr> {
         let mut query = Self::with_tag_filter(
             word::Entity::find().filter(word::Column::WordbookId.eq(book_id)),
             tag_ids,
+            mode,
         );
         if let Some(q) = q {
             let pat = format!("%{q}%");
@@ -350,23 +358,33 @@ impl WordRepo {
             .rows_affected)
     }
 
-    /// 标签交集筛选：word 必须同时拥有全部 tag_ids。
-    /// 子查询：`word_id IN (SELECT word_id FROM word_tag WHERE tag_id IN (...) GROUP BY word_id HAVING COUNT(DISTINCT tag_id) = N)`。
-    fn with_tag_filter(mut query: Select<word::Entity>, tag_ids: &[i32]) -> Select<word::Entity> {
+    /// 标签筛选：`TagMatch::And` = 交集（word 必须同时拥有全部 tag_ids）；
+    /// `TagMatch::Or` = 并集（拥有任一 tag_id 即命中）。
+    /// 交集子查询：`word_id IN (SELECT word_id FROM word_tag WHERE tag_id IN (...) GROUP BY word_id HAVING COUNT(DISTINCT tag_id) = N)`；
+    /// 并集子查询：`word_id IN (SELECT word_id FROM word_tag WHERE tag_id IN (...))`（word_tag 复合主键无重复行，无需 DISTINCT）。
+    fn with_tag_filter(
+        mut query: Select<word::Entity>,
+        tag_ids: &[i32],
+        mode: TagMatch,
+    ) -> Select<word::Entity> {
         if tag_ids.is_empty() {
             return query;
         }
-        let sub = Query::select()
+        let mut sub = Query::select()
             .column((word_tag::Entity, word_tag::Column::WordId))
             .from(word_tag::Entity)
             .cond_where(word_tag::Column::TagId.is_in(tag_ids.iter().copied()))
-            .group_by_col((word_tag::Entity, word_tag::Column::WordId))
-            .cond_having(
-                Expr::col((word_tag::Entity, word_tag::Column::TagId))
-                    .count_distinct()
-                    .eq(tag_ids.len() as u64),
-            )
             .to_owned();
+        if mode == TagMatch::And {
+            sub = sub
+                .group_by_col((word_tag::Entity, word_tag::Column::WordId))
+                .cond_having(
+                    Expr::col((word_tag::Entity, word_tag::Column::TagId))
+                        .count_distinct()
+                        .eq(tag_ids.len() as u64),
+                )
+                .to_owned();
+        }
         query = query.filter(word::Column::Id.in_subquery(sub));
         query
     }

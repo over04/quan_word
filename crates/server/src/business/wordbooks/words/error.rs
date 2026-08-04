@@ -27,6 +27,8 @@ pub enum WordError {
     InvalidSortField { field: String },
     #[error("order 必须为 asc 或 desc: {dir}")]
     InvalidSortDir { dir: String },
+    #[error("不支持的标签匹配模式: {mode}，可选：and / or")]
+    InvalidTagMatch { mode: String },
     #[error("标签参数不合法: {tag}")]
     InvalidTagIds { tag: String },
     #[error("标签 {tag_id} 不属于单词书 {wordbook_id}")]
