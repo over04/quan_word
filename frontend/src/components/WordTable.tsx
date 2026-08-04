@@ -178,7 +178,7 @@ export default function WordTable({
             className="w-full bg-white rounded-full border border-charcoal/10 pl-10 pr-4 py-2.5 text-sm text-charcoal placeholder:text-charcoal/30 focus:border-clay focus:outline-none transition-colors"
           />
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2">
           <div className="bg-sand/30 rounded-full p-1 flex" role="group" aria-label="排序字段">
             {SORTS.map((s) => (
               <button

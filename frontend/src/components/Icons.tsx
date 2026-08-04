@@ -1,5 +1,8 @@
+import type { CSSProperties } from 'react'
+
 interface IconProps {
   className?: string
+  style?: CSSProperties
 }
 
 function base(className?: string) {
@@ -46,6 +49,14 @@ export function PlusIcon({ className }: IconProps) {
   return (
     <svg {...base(className)}>
       <path d="M12 5v14M5 12h14" />
+    </svg>
+  )
+}
+
+export function WrenchIcon({ className, style }: IconProps) {
+  return (
+    <svg {...base(className)} style={style}>
+      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.2L3 17.8V21h3.2l6.3-6.3a4 4 0 0 0 5.2-5.4l-2.7 2.7-2.3-2.3z" />
     </svg>
   )
 }

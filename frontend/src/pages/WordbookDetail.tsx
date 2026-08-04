@@ -98,12 +98,16 @@ function loadPageNo(bookId: number): number {
 
 export default function WordbookDetail({ bookId, onBack }: Props) {
   const [book, setBook] = useState<Wordbook | null>(null)
-  const [data, setData] = useState<Page<Word> | null>(null)
+  // 已加载纸页（纸质书滚动模式）：页码升序连续；首屏 1 页 + 后台预取，滚动接近底部追加
+  const [pages, setPages] = useState<Array<{ d: Page<Word>; pageNo: number }>>([])
   const [mode, setMode] = useState<'paper' | 'list'>('paper')
-  const [page, setPage] = useState<number>(() => loadPageNo(bookId))
+  // 页码持久化：保存首张已加载纸的页码（"上次浏览位置"语义的近似），刷新从该页开始；
+  // 数据未就绪（pages 空）时不写，避免挂载时把持久化页码重置为 1（首次加载 effect 靠它恢复位置）
+  const startPage = pages[0]?.pageNo ?? null
   useEffect(() => {
-    localStorage.setItem(`qw_page_${bookId}`, String(page))
-  }, [page, bookId])
+    if (startPage === null) return
+    localStorage.setItem(`qw_page_${bookId}`, String(startPage))
+  }, [startPage, bookId])
   const [pageSize, setPageSize] = useState<number>(loadPageSize)
   const [fontScale, setFontScale] = useState<number>(loadFontScale)
   // 遮挡：基线（整书全隐藏）+ 手动例外（点过的词）；按书持久化到 localStorage
@@ -135,15 +139,15 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
   // 列表模式刷新信号：增删改后递增，WordTable 重新查询
   const [listRefresh, setListRefresh] = useState(0)
 
-  // 分页缓存：key = `${bookId}:${page}:${size}`，避免重复请求；预取相邻页
+  // 分页缓存：key = `${bookId}:${page}:${size}:${seed}:${tagIds}`，避免重复请求
   const cache = useRef<Map<string, Page<Word>>>(new Map())
-  // 请求序号：翻页/筛选/打乱快速连续操作时丢弃过期响应（最后一次调用生效）
+  // 请求序号：筛选/打乱/重载快速连续操作时丢弃过期响应（最后一次调用生效）
   const seqRef = useRef(0)
-  // 相邻页数据（预取结果），供纸质书滑动翻页时直接可见
-  const [neighbor, setNeighbor] = useState<{ prev: Page<Word> | null; next: Page<Word> | null }>({
-    prev: null,
-    next: null,
-  })
+  // 下一页加载中（哨兵触发后，底部显示占位）
+  const [loadingMore, setLoadingMore] = useState(false)
+  const loadingMoreRef = useRef(false)
+  // in-flight 请求去重：同一 key 并发请求复用同一 Promise
+  const inflight = useRef(new Map<string, Promise<Page<Word> | null>>())
 
   // 书信息只加载一次（不随翻页重复请求）；单书接口，不再拉全量列表
   useEffect(() => {
@@ -178,108 +182,102 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     }
   }, [bookId])
 
-  /** 取一页数据（缓存命中同步返回；请求带序号，过期响应丢弃，不写缓存不报错） */
-  async function fetchPage(
+  /** 取一页数据：缓存命中同步返回；in-flight 同 key 并发复用同一 Promise；成功填缓存；失败 setError 并返回 null */
+  async function fetchPageRaw(
     p: number,
     size: number,
     seed: string | null,
     tagIds: number[],
   ): Promise<Page<Word> | null> {
     const key = `${bookId}:${p}:${size}:${seed ?? ''}:${tagIds.join(',')}`
-    const seq = ++seqRef.current
     const cached = cache.current.get(key)
     if (cached) return cached
+    const running = inflight.current.get(key)
+    if (running) return running
     const tagParam = tagIds.length > 0 ? tagIds.join(',') : undefined
-    try {
-      const paged = await words.list(bookId, p, size, {
+    const prom = words
+      .list(bookId, p, size, {
         ...(seed ? { order: 'random', seed } : {}),
         ...(tagParam ? { tag: tagParam } : {}),
       })
-      if (seq !== seqRef.current) return null // 过期响应：丢弃
-      cache.current.set(key, paged)
-      return paged
-    } catch (e) {
-      if (seq !== seqRef.current) return null
-      setError(e instanceof Error ? e.message : '加载失败')
-      return null
-    }
+      .then((r) => {
+        cache.current.set(key, r)
+        return r
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : '加载失败')
+        return null
+      })
+      .finally(() => {
+        inflight.current.delete(key)
+      })
+    inflight.current.set(key, prom)
+    return prom
   }
 
-  const loadPage = useCallback(
-    async (p: number, size: number, opts?: { prefetch?: boolean; seed?: string | null; tagIds?: number[] }) => {
-      const seed = opts?.seed !== undefined ? opts.seed : shuffleSeed
-      const tagIds = opts?.tagIds ?? filterTagIds
-      // 空页回退：持久化页码越界（词被删页数减少）或删除后当前页删空 → 逐页回退到有数据的页
-      let target = p
-      let paged = await fetchPage(target, size, seed, tagIds)
-      while (paged && paged.items.length === 0 && target > 1) {
-        target -= 1
-        setPage(target)
-        paged = await fetchPage(target, size, seed, tagIds)
-      }
-      if (!paged) return // 过期或失败：不更新 UI
-      setError('')
-      setData(paged)
-      if (opts?.prefetch !== false) prefetchNeighbors(target, size, paged.total_pages, seed, tagIds)
-      syncNeighbor(target, size, seed, tagIds)
-    },
-    [bookId, prefetchNeighbors, shuffleSeed, filterTagIds],
-  )
-
-  /** 预取相邻页（缓存命中与网络加载两条路径都执行，保证滑动翻页时相邻页可见） */
-  function prefetchNeighbors(
+  /** UI 路径取页：带请求序号，过期响应（筛选/打乱/重载后）不生效 */
+  async function fetchPage(
     p: number,
     size: number,
-    totalPages: number,
     seed: string | null,
     tagIds: number[],
-  ) {
-    const tagParam = tagIds.length > 0 ? tagIds.join(',') : undefined
-    const keyOf = (pp: number) => `${bookId}:${pp}:${size}:${seed ?? ''}:${tagIds.join(',')}`
-    if (p > 1 && !cache.current.has(keyOf(p - 1))) {
-      const pk = keyOf(p - 1)
-      words
-        .list(bookId, p - 1, size, {
-          ...(seed ? { order: 'random', seed } : {}),
-          ...(tagParam ? { tag: tagParam } : {}),
-        })
-        .then((r) => {
-          cache.current.set(pk, r)
-          setNeighbor((n) => ({ ...n, prev: r }))
-        })
-        .catch(() => {})
-    }
-    if (p < totalPages && !cache.current.has(keyOf(p + 1))) {
-      const nk = keyOf(p + 1)
-      words
-        .list(bookId, p + 1, size, {
-          ...(seed ? { order: 'random', seed } : {}),
-          ...(tagParam ? { tag: tagParam } : {}),
-        })
-        .then((r) => {
-          cache.current.set(nk, r)
-          setNeighbor((n) => ({ ...n, next: r }))
-        })
-        .catch(() => {})
-    }
+  ): Promise<Page<Word> | null> {
+    const seq = ++seqRef.current
+    const r = await fetchPageRaw(p, size, seed, tagIds)
+    if (seq !== seqRef.current) return null // 过期响应：丢弃
+    return r
   }
 
-  /** 从缓存同步相邻页数据（翻页后相邻页已预取或已缓存） */
-  function syncNeighbor(p: number, size: number, seed: string | null, tagIds: number[]) {
-    const keyOf = (pp: number) => `${bookId}:${pp}:${size}:${seed ?? ''}:${tagIds.join(',')}`
-    setNeighbor({
-      prev: cache.current.get(keyOf(p - 1)) ?? null,
-      next: cache.current.get(keyOf(p + 1)) ?? null,
-    })
+  /** 后台预取下一页填缓存（不 setState）；已缓存/越界跳过 */
+  function prefetchNext(p: number, totalPages: number, seed: string | null, tagIds: number[], size: number) {
+    if (p > totalPages) return
+    const key = `${bookId}:${p}:${size}:${seed ?? ''}:${tagIds.join(',')}`
+    if (cache.current.has(key)) return
+    void fetchPageRaw(p, size, seed, tagIds)
   }
+
+  /** 从第 p 页开始重建；不清空 pages，新数据到达才整体替换（避免加载闪白） */
+  async function loadFrom(p: number, opts?: { seed?: string | null; tagIds?: number[]; size?: number }) {
+    const size = opts?.size ?? pageSize
+    const seed = opts?.seed !== undefined ? opts.seed : shuffleSeed
+    const tagIds = opts?.tagIds ?? filterTagIds
+    let target = p
+    let paged = await fetchPage(target, size, seed, tagIds)
+    // 空页回退：持久化页码越界（词被删页数减少）或删除后当前页删空 → 逐页回退到有数据的页
+    while (paged && paged.items.length === 0 && target > 1) {
+      target -= 1
+      paged = await fetchPage(target, size, seed, tagIds)
+    }
+    if (!paged) return // 过期或失败：不更新 UI
+    setError('')
+    setPages([{ d: paged, pageNo: target }])
+    prefetchNext(target + 1, paged.total_pages, seed, tagIds, size)
+    prefetchNext(target + 2, paged.total_pages, seed, tagIds, size)
+  }
+
+  /** 哨兵回调：加载下一页并追加；loadingMoreRef 防重入；已到末页 no-op */
+  const loadMore = useCallback(
+    async (nextPageNo: number, totalPages: number) => {
+      if (loadingMoreRef.current || nextPageNo > totalPages) return
+      loadingMoreRef.current = true
+      setLoadingMore(true)
+      const d = await fetchPage(nextPageNo, pageSize, shuffleSeed, filterTagIds)
+      loadingMoreRef.current = false
+      setLoadingMore(false)
+      if (d && d.items.length > 0) {
+        setPages((p) => [...p, { d, pageNo: nextPageNo }])
+        prefetchNext(nextPageNo + 1, d.total_pages, shuffleSeed, filterTagIds, pageSize)
+      }
+    },
+    [bookId, pageSize, shuffleSeed, filterTagIds],
+  )
 
   /** 打乱 / 恢复顺序：换 seed 并清缓存重载第 1 页（作用于当前标签筛选后的集合）；遮挡状态按词 id 存储，与顺序无关，保持 */
   function toggleShuffle() {
     const seed = shuffleSeed ? null : String(Date.now())
     setShuffleSeed(seed)
     cache.current.clear()
-    setPage(1)
-    loadPage(1, pageSize, { prefetch: true, seed, tagIds: filterTagIds })
+    loadFrom(1, { seed, tagIds: filterTagIds })
   }
 
   /** 重新打乱：保持打乱开启，换新 seed（仅打乱状态下可点）；遮挡状态保持 */
@@ -288,16 +286,14 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     const seed = String(Date.now())
     setShuffleSeed(seed)
     cache.current.clear()
-    setPage(1)
-    loadPage(1, pageSize, { prefetch: true, seed, tagIds: filterTagIds })
+    loadFrom(1, { seed, tagIds: filterTagIds })
   }
 
   /** 标签筛选变更：更新状态并清缓存重载第 1 页（打乱状态保持，重新作用于新集合） */
   function changeTagFilter(next: number[]) {
     setFilterTagIds(next)
     cache.current.clear()
-    setPage(1)
-    loadPage(1, pageSize, { prefetch: true, seed: shuffleSeed, tagIds: next })
+    loadFrom(1, { seed: shuffleSeed, tagIds: next })
   }
 
   function toggleTagFilter(id: number) {
@@ -322,19 +318,18 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     if (next.length !== filterTagIds.length) {
       setFilterTagIds(next)
       cache.current.clear()
-      setPage(1)
-      loadPage(1, pageSize, { prefetch: true, seed: shuffleSeed, tagIds: next })
+      loadFrom(1, { seed: shuffleSeed, tagIds: next })
     } else {
       cache.current.clear()
-      loadPage(page, pageSize, { prefetch: true })
+      loadFrom(pages[0]?.pageNo ?? 1)
     }
     // 列表行内标签 chips 与词数变化：强制列表模式重新查询
     setListRefresh((k) => k + 1)
   }
 
-  // 首次加载（含预取）：从持久化页码开始，越界由 loadPage 空页回退修正
+  // 首次加载：从持久化页码开始，越界由 loadFrom 空页回退修正
   useEffect(() => {
-    loadPage(page, pageSize, { prefetch: true })
+    loadFrom(loadPageNo(bookId))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -342,8 +337,7 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     localStorage.setItem('qw_page_size', String(n))
     cache.current.clear()
     setPageSize(n)
-    setPage(1)
-    loadPage(1, n, { prefetch: true })
+    loadFrom(1, { size: n })
   }
 
   function changeFontScale(s: number) {
@@ -379,24 +373,10 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     }))
   }, [])
 
-  function goPrev() {
-    if (page <= 1) return
-    const np = page - 1
-    setPage(np)
-    loadPage(np, pageSize)
-  }
-
-  function goNext() {
-    if (!data || page >= data.total_pages) return
-    const np = page + 1
-    setPage(np)
-    loadPage(np, pageSize)
-  }
-
-  /** 增删改后：清缓存重载当前页 + 刷新书信息 + 触发列表模式重新查询 */
+  /** 增删改后：清缓存重载当前起始页 + 刷新书信息 + 触发列表模式重新查询 */
   async function onMutated() {
     cache.current.clear()
-    await loadPage(page, pageSize, { prefetch: true })
+    await loadFrom(pages[0]?.pageNo ?? 1)
     setListRefresh((k) => k + 1)
     try {
       const b = await wordbooks.get(bookId)
@@ -476,8 +456,8 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
             <div className="flex items-center min-w-0 flex-1">
               <h1 className="font-serif text-base text-charcoal truncate">{book ? book.name : '…'}</h1>
             </div>
-            {data && (
-              <span className="shrink-0 text-xs text-charcoal/40 tabular-nums whitespace-nowrap">{data.total} 词</span>
+            {pages[0] && (
+              <span className="shrink-0 text-xs text-charcoal/40 tabular-nums whitespace-nowrap">{pages[0].d.total} 词</span>
             )}
             <div className="ml-auto flex items-center gap-2.5 shrink-0">
               <div className="bg-sand/30 rounded-full p-1 flex shrink-0" role="tablist" aria-label="视图模式">
@@ -686,10 +666,9 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
         {mode === 'paper' ? (
           <div key="paper" className="animate-fade-in-up">
             <PaperBookView
-              data={data}
-              page={page}
-              onPrev={goPrev}
-              onNext={goNext}
+              pages={pages}
+              loading={loadingMore}
+              onReachEnd={loadMore}
               onAddFirst={handleOpenCreate}
               fontScale={fontScale}
               hideAllWord={cover.hideAllWord}
@@ -698,8 +677,6 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
               defDiff={cover.defDiff}
               onToggleWord={toggleWord}
               onToggleDef={toggleDef}
-              prevPage={neighbor.prev}
-              nextPage={neighbor.next}
               tags={tags}
               onTagsUpdated={onMutated}
               onTagsCreated={(tag) => setTags((prev) => [...prev, tag])}

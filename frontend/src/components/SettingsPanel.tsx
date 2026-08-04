@@ -13,7 +13,7 @@ const PAGE_SIZE_MAX = 200
 const FONT_MIN = 12
 const FONT_MAX = 28
 
-/** 显示设置面板：每页单词数/字号滑块 */
+/** 显示设置面板：每次加载词数/字号滑块（滚动模式下词数为懒加载粒度，非视觉页） */
 export default function SettingsPanel({
   pageSize,
   fontScale,
@@ -40,7 +40,7 @@ export default function SettingsPanel({
 
       <div className="mt-4">
         <div className="flex items-center justify-between">
-          <p className="text-xs font-bold text-charcoal/50 uppercase tracking-widest">每页单词数</p>
+          <p className="text-xs font-bold text-charcoal/50 uppercase tracking-widest">每次加载词数</p>
           <span className="text-sm font-semibold text-charcoal tabular-nums">{draftSize}</span>
         </div>
         <input
@@ -53,7 +53,7 @@ export default function SettingsPanel({
           onPointerUp={() => onChangePageSize(draftSize)}
           onKeyUp={() => onChangePageSize(draftSize)}
           className="mt-3 w-full accent-clay cursor-pointer"
-          aria-label="每页单词数"
+          aria-label="每次加载词数"
         />
         <div className="mt-1 flex justify-between text-[11px] text-charcoal/35 tabular-nums">
           <span>{PAGE_SIZE_MIN}</span>

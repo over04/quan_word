@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-**单词本** — a paper-notebook-style vocabulary learning web app. Users organize words into independent "wordbooks" (单词书), review them in a simulated paper-book view (ruled lines, tap-to-cover self-testing), and manage them in a list view. Backend: Rust (axum 0.8 + SeaORM 2.0 + sea-orm-migration). Frontend: React 19 + Vite 8 + TailwindCSS v4. Single-binary deployment (rust-embed embeds `frontend/dist`). Database: SQLite by default, PostgreSQL switchable via YAML config.
+**单词本** — a paper-notebook-style vocabulary learning web app. Users organize words into independent "wordbooks" (单词书), review them in a simulated paper-book view (ruled lines, tap-to-cover self-testing, continuous vertical scroll with lazy-loaded pages), and manage them in a list view. Backend: Rust (axum 0.8 + SeaORM 2.0 + sea-orm-migration). Frontend: React 19 + Vite 8 + TailwindCSS v4. Single-binary deployment (rust-embed embeds `frontend/dist`). Database: SQLite by default, PostgreSQL switchable via YAML config.
 
 ## Architecture & Data Flow
 
@@ -100,6 +100,7 @@ Verification: clippy gate + `cargo test`; API smoke-tested via curl against a ru
 - **Errors:** each business domain defines its own `thiserror` enum with semantic variants (no vague `BadRequest(String)` in services); `common::error::ApiError` is the HTTP aggregate, mapped via `From` in each domain's `error.rs`.
 - **Closed sets are enums:** query params (`order`, `seed`, `sort`) are parsed once at the router boundary into `WordOrder` / `SortField` / `SortDir`; business logic matches enum variants, never string literals. `SortField`/`SortDir` use `strum::EnumString` (declarative mapping); `WordOrder` keeps a handwritten parse because `Random(String)` carries a payload strum cannot express.
 - **ts-rs contract:** frontend-facing DTOs derive `TS` with `#[ts(export, export_to = "...ts")]` (+ `rename` where the TS name differs, `#[ts(type = "number")]` for single u64, `#[ts(type = "Array<number>")]` for u64 collections, `#[ts(optional)]` for omitted request fields). Regenerate with `cargo test` after DTO changes; never hand-edit `frontend/src/generated/`.
+- **完成任务必须同步更新 `AGENTS.md`:** 每次功能/修复/重构落地后，把仓库事实变化写回本文件（新增约定、架构决策、文件职责、验证方式变更），过时描述同步修正，保证 `AGENTS.md` 始终反映当前代码；纯实验或未落地的工作不写。
 
 **Backend patterns:**
 - Services are unit structs (`pub struct WordbookService;`) with associated async fns taking `&AppState` as first arg (access DB via `state.db.as_ref()`); repos are unit structs taking `&DatabaseConnection`.
@@ -115,8 +116,8 @@ Verification: clippy gate + `cargo test`; API smoke-tested via curl against a ru
 **Frontend patterns:**
 - Components receive plain props; pages hold state; `api.ts` centralizes fetch and re-exports contract types from `frontend/src/generated/` (ts-rs output).
 - Reader settings (page size, font px) persisted in `localStorage` under `qw_page_size` / `qw_font_scale`; loaded via lazy `useState(loader)`.
-- PaperBookView page cache: `Map<"${bookId}:${page}:${size}", Page<Word>>` in `useRef`, with adjacent-page prefetch; mutations clear the cache.
-- Paper book interactions: tap word/meaning toggles ink-stripe cover (`aria-pressed` + transparent-text span preserving layout width); page turns via left/right third click zones, pointer drag (threshold 90px, `dragDxRef`), or ←/→ keys; flip animation states `idle|out|in`.
+- PaperBookView data flow (scroll mode): `WordbookDetail` holds `pages: Array<{ d: Page<Word>; pageNo: number }>` (loaded pages, ascending); page cache `Map<"${bookId}:${page}:${size}:${seed}:${tagIds}", Page<Word>>` in `useRef` + `fetchPageRaw` (cache hit + in-flight dedupe via `inflight` map) + `fetchPage` (seq guard for stale responses); `loadFrom(p)` rebuilds from page p with prefetch of next 2 pages, `loadMore(nextPageNo, totalPages)` appends on sentinel trigger; mutations clear cache and reload from `pages[0]`; page number persisted as first loaded page (`qw_page_${bookId}`).
+- PaperBookView (scroll mode): continuous vertical scroll; all loaded pages' words merged into ONE grid (row-group slicing: `cols` word cells → `cols` ruled lines → `cols` definition cells per row-group, so lines align across the row; `cols` = 2/3/4/5 by Tailwind breakpoint, recomputed on resize); lazy loading via IntersectionObserver sentinel (800px early trigger, observer rebuilt on `pages.length`/`loading` change to keep filling viewport, 1.5s no-progress debounce against retry storms); long words/phonetics wrap (break-words + min-w-0), definitions render in full (no line-clamp); tap word/meaning toggles blur cover (`Covered`, `aria-pressed` + persisted `wordDiff`/`defDiff` in `qw_cover_${bookId}`); tag chips are display-only, all tag add/remove happens in the TagQuickModal opened via the wrench button; chip font & wrench icon scale with fontScale (`FontStyles.chipFont`/`iconSize`).
 - Styling: **Visual Organic** design system from `docs/dev/style.md` — palette `ivory #F8F4EF` / `charcoal #2F2A25` / `clay #C58F6D` / `sage #C9D5C6` / `sand #E5D8C8` (defined in `index.css` `@theme`), fonts DM Serif Display (headings, `font-serif`) + Plus Jakarta Sans (body). **No emoji, no gradients** in UI (user-mandated); SVG icons in `components/Icons.tsx` (stroke-based).
 
 ## Important Files
@@ -133,7 +134,7 @@ Verification: clippy gate + `cargo test`; API smoke-tested via curl against a ru
 | `Dockerfile` | Multi-stage: node → `rust:1.96-alpine` (musl static) → scratch; `--mount=type=cache` persists cargo registry/target |
 | `docker-compose.yml` | `./data` bind mount (SQLite inspectable), port, PG-switch comment template |
 | `.cargo/config.toml` | `TS_RS_EXPORT_DIR` for ts-rs generated contract output |
-| `frontend/src/components/PaperBookView.tsx` | Core paper-book UI: ruled grid, tap-to-cover, gesture/zone/keyboard page turns |
+| `frontend/src/components/PaperBookView.tsx` | Core paper-book UI: continuous scroll, row-group grid (aligned ruled lines), tap-to-cover, lazy-load sentinel |
 | `frontend/src/components/ImportModal.tsx` | 导入弹窗：上传-预览-确认三步，后端分页/筛选/校验，草稿防抖提交（fetchRows/reqSeq 竞态保护），重复组跳过集合 |
 | `frontend/src/index.css` | Design tokens (`@theme`), keyframes, texture overlays |
 | `config.example.yaml` | Runtime config template — copy to `config.yaml` (git-ignored): `server.host/port`, `database.url` (sqlite:// or postgres://), `import` 段（可选） |
@@ -150,7 +151,7 @@ Verification: clippy gate + `cargo test`; API smoke-tested via curl against a ru
 
 - Unit tests live next to the logic they cover (`#[cfg(test)]` in order.rs / sort.rs / sort_dir.rs / service.rs / error.rs / import.rs): query-param parsing whitelists, validation rules, seeded shuffle determinism/permutation, error→status mapping, 导入行号/分组/标签解析（prepare_rows/group_rows/parse_tags）。
 - ts-rs export tests (`export_bindings_*`) regenerate `frontend/src/generated/` on every `cargo test`; commit the generated files alongside DTO changes.
-- No integration test suite yet. QA approach: `cargo clippy --workspace --all-targets --all-features -- -D warnings` + `cargo test --workspace` + `cargo build` + `npm run build` must pass; API smoke-tested via curl against a running server (create wordbook → add words → paginate → update → delete → verify cascade with `sqlite3 data/quan_word.db 'SELECT count(*) FROM word;'`; 导入冒烟：preview（含标签/重复/错误行的 6 列 csv，断言 total/valid/invalid/duplicate 统计与行号）→ import/rows（修正错误行后统计刷新、翻页/筛选）→ import（断言 imported/updated/skipped_*/created_tags）→ 查询确认标签关联与义项合并)；UI verified manually/browser-driven (cover toggle, drag/zone/keyboard page turns, settings sliders, responsive columns 2/3/4/5 by breakpoint, 导入预览分组卡片编辑/筛选/翻页)。
+- No integration test suite yet. QA approach: `cargo clippy --workspace --all-targets --all-features -- -D warnings` + `cargo test --workspace` + `cargo build` + `npm run build` must pass; API smoke-tested via curl against a running server (create wordbook → add words → paginate → update → delete → verify cascade with `sqlite3 data/quan_word.db 'SELECT count(*) FROM word;'`; 导入冒烟：preview（含标签/重复/错误行的 6 列 csv，断言 total/valid/invalid/duplicate 统计与行号）→ import/rows（修正错误行后统计刷新、翻页/筛选）→ import（断言 imported/updated/skipped_*/created_tags）→ 查询确认标签关联与义项合并)；UI verified manually/browser-driven (cover toggle, continuous scroll + lazy-load sentinel (auto-fill short content, prefetch cache), long-word wrap & ruled-line row alignment at 2/3/4/5 columns, settings sliders, 导入预览分组卡片编辑/筛选/翻页)。
 - When changing pagination: remember API pages are 1-based but `fetch_page` is 0-based. 导入分页按组切（组不跨页），`page_size` clamp 1..=100。
 - When changing schema: add a migration (chronological `mYYYYMMDD_*` file, registered in `crates/migration/src/lib.rs`), and verify BOTH sqlite (default) and postgres (config.example.yaml URL + local `postgres:17` container, e.g. `-p 5433:5432` if a local PG occupies 5432).
 - When changing DTOs: rerun `cargo test` to refresh ts-rs output, then `npm run build` to verify frontend type alignment; contract types in `frontend/src/generated/` are the source of truth. ts-rs 只生成不删除——DTO 删除后手动清理对应 `frontend/src/generated/*.ts` 孤儿文件。

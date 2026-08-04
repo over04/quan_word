@@ -1,13 +1,15 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { words, type Page, type Tag, type Word } from '../api'
-import { BookIcon, ChevronLeftIcon, ChevronRightIcon, PlusIcon } from './Icons'
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type Page, type Tag, type Word } from '../api'
+import { BookIcon, PlusIcon, WrenchIcon } from './Icons'
 import TagQuickModal from './TagQuickModal'
 
 interface Props {
-  data: Page<Word> | null
-  page: number
-  onPrev: () => void
-  onNext: () => void
+  /** 已加载页，按页码升序且连续；d 必非空（未就绪页不渲染） */
+  pages: Array<{ d: Page<Word>; pageNo: number }>
+  /** 正在加载下一页（底部显示"加载中…"占位） */
+  loading: boolean
+  /** 哨兵进入视口（提前 800px）时触发；参数 = 要加载的下一页页码与该书总页数 */
+  onReachEnd: (nextPageNo: number, totalPages: number) => void
   onAddFirst: () => void
   /** 单词字号（px，12–28），音标/释义/行高按比例联动 */
   fontScale: number
@@ -20,9 +22,6 @@ interface Props {
   /** 手动点击单词/释义：父级按当前实际显示翻转并持久化 */
   onToggleWord: (id: number) => void
   onToggleDef: (id: number) => void
-  /** 相邻页数据（预取缓存），滑动翻页过程中可见 */
-  prevPage: Page<Word> | null
-  nextPage: Page<Word> | null
   /** 该书全部标签（词块 chips 与快速弹窗用） */
   tags: Tag[]
   /** 单词标签集变更成功后回调（父级刷新数据） */
@@ -31,14 +30,29 @@ interface Props {
   onTagsCreated: (tag: Tag) => void
 }
 
+/** 按字号计算出的各元素样式（fontStyles 的返回契约） */
+export interface FontStyles {
+  word: { fontSize: string }
+  phonetic: { fontSize: string }
+  def: { fontSize: string }
+  rowH: number
+  defMinH: number
+  /** 标签 chip 字号 px（随字号联动，最小 10px） */
+  chipFont: number
+  /** 行内图标尺寸 px（随字号联动，最小 10px） */
+  iconSize: number
+}
+
 /** 按字号数字计算各元素尺寸：字号 px → 各元素样式 */
-function fontStyles(fontScale: number) {
+function fontStyles(fontScale: number): FontStyles {
   return {
     word: { fontSize: `${fontScale}px` },
     phonetic: { fontSize: `${Math.round(fontScale * 0.55)}px` },
     def: { fontSize: `${Math.round(fontScale * 0.6)}px` },
     rowH: fontScale * 1.7,
     defMinH: fontScale * 1.4,
+    chipFont: Math.max(10, Math.round(fontScale * 0.5)),
+    iconSize: Math.max(10, Math.round(fontScale * 0.6)),
   }
 }
 
@@ -51,7 +65,7 @@ function formatDefinitions(w: Word): string {
 function Covered({ text }: { text: string }) {
   return (
     <span
-      className="inline-block select-none blur-[6px] opacity-65 transition-[filter,opacity] duration-300"
+      className="inline-block max-w-full select-none break-words blur-[6px] opacity-65 transition-[filter,opacity] duration-300"
       style={{
         WebkitMaskImage:
           'radial-gradient(ellipse 150% 160% at 50% 50%, black 12%, transparent 74%)',
@@ -65,182 +79,146 @@ function Covered({ text }: { text: string }) {
   )
 }
 
-const DRAG_THRESHOLD_PX = 90
-const SLIDE_MS = 450
-/** 轨道平移过渡（JSX 内联与拖动结束恢复共用，避免字符串漂移） */
-const TRACK_TRANSITION = 'transform 0.45s cubic-bezier(0.22, 0.8, 0.22, 1)'
-
-interface SheetProps {
-  d: Page<Word> | null
-  pageNo: number
-  fontScale: number
-  hideAllWord: boolean
-  hideAllDef: boolean
-  /** 手动点过的词：wordId → 该词绝对隐藏状态（例外） */
-  wordDiff: Record<number, boolean>
-  defDiff: Record<number, boolean>
-  onToggleWord: (id: number) => void
-  onToggleDef: (id: number) => void
-  /** 单词行进入动画：仅首次加载播放 */
-  wordsAnim: boolean
-  /** 标签 id → 名称（chips 显示） */
-  tagName: Map<number, string>
-  onOpenQuick: (w: Word) => void
-  /** 待确认移除的标签（防误触：chip 第一次点击进确认态，第二次才删） */
-  pendingRemove: { w: Word; tid: number } | null
-  onToggleRemove: (w: Word, tid: number) => void
-  /** 点击词块其他区域：取消待确认 */
-  onClearRemove: () => void
+/** 响应式列数：与 Tailwind 断点一致（grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5） */
+function colCount() {
+  const w = window.innerWidth
+  if (w >= 1536) return 5
+  if (w >= 1024) return 4
+  if (w >= 640) return 3
+  return 2
 }
 
-/** 一张纸：页眉 + 横线单词网格 + 页脚；数据未就绪时渲染空白纸。memo：拖动/低频状态变化时跳过重渲染 */
-const Sheet = memo(function Sheet({
-  d,
-  pageNo,
-  fontScale,
+/** 单词区 props（供 memo 组件使用；引用稳定的回调由父级 useCallback 保证） */
+interface WordLineCellProps {
+  w: Word
+  /** 是否播放进入动画（仅首屏） */
+  anim: boolean
+  /** 词条在已加载单词流中的序号（动画错峰用） */
+  index: number
+  f: FontStyles
+  hideAllWord: boolean
+  wordDiff: Record<number, boolean>
+  onToggleWord: (id: number) => void
+}
+
+/** 单词区：横线上方的单词 + 音标（长词折行撑高，不截断不溢出） */
+const WordLineCell = memo(function WordLineCell({
+  w,
+  anim,
+  index,
+  f,
   hideAllWord,
-  hideAllDef,
   wordDiff,
-  defDiff,
   onToggleWord,
+}: WordLineCellProps) {
+  // 基线 + 手动例外：手动点过的词用其绝对状态，其余跟随基线（无优先级，最后操作者生效）
+  const wordHidden = w.id in wordDiff ? wordDiff[w.id] : hideAllWord
+  return (
+    <div
+      className={`group/cell px-2 md:px-3 pt-1 min-w-0 hover:bg-sand/15 transition-colors ${anim ? 'animate-word-rise' : ''}`}
+      style={anim ? { animationDelay: `${Math.min(index, 8) * 40}ms` } : undefined}
+    >
+      <div className="flex items-end gap-2 min-w-0" style={{ minHeight: f.rowH }}>
+        <button
+          onClick={() => onToggleWord(w.id)}
+          aria-pressed={wordHidden}
+          title={wordHidden ? '点击显示单词' : '点击遮挡单词，回忆拼写'}
+          style={f.word}
+          className="min-w-0 font-serif text-charcoal tracking-wide leading-tight pb-[3px] break-words rounded -mx-1 px-1 transition-colors duration-150 hover:bg-sand/50 focus-visible:outline-2 focus-visible:outline-clay focus-visible:outline-offset-4"
+        >
+          {wordHidden ? <Covered text={w.spelling} /> : w.spelling}
+        </button>
+        {w.phonetic && (
+          <span
+            style={f.phonetic}
+            className="min-w-0 text-charcoal/40 tracking-wide leading-tight pb-[4px] break-words"
+          >
+            {wordHidden ? <Covered text={w.phonetic} /> : w.phonetic}
+          </span>
+        )}
+      </div>
+    </div>
+  )
+})
+
+/** 释义 + 标签区 props */
+interface WordDefCellProps {
+  w: Word
+  anim: boolean
+  index: number
+  f: FontStyles
+  hideAllDef: boolean
+  defDiff: Record<number, boolean>
+  onToggleDef: (id: number) => void
+  tagName: Map<number, string>
+  onOpenQuick: (w: Word) => void
+}
+
+/** 释义 + 标签区：横线下方的释义（完整多行）与标签 chips + 添加按钮 */
+const WordDefCell = memo(function WordDefCell({
+  w,
+  anim,
+  index,
+  f,
+  hideAllDef,
+  defDiff,
   onToggleDef,
-  wordsAnim,
   tagName,
   onOpenQuick,
-  pendingRemove,
-  onToggleRemove,
-  onClearRemove,
-}: SheetProps) {
-  const f = fontStyles(fontScale)
-  const words = d?.items ?? []
-  const pct = d && d.total_pages > 1 ? Math.round((pageNo / d.total_pages) * 100) : 100
-
+}: WordDefCellProps) {
+  const defHidden = w.id in defDiff ? defDiff[w.id] : hideAllDef
+  const full = formatDefinitions(w)
   return (
-    <div className="relative w-full shrink-0 basis-1/3 min-h-[calc(100dvh-12rem)] bg-[#FDFAF4] select-none flex flex-col">
-      {/* 左侧装订线：靠左，内容区整体右移避开 */}
-      <div aria-hidden="true" className="absolute left-5 top-0 bottom-0 w-px bg-[#E9B8BC]/70" />
-      {/* 页眉 */}
-      <div className="relative px-10 md:px-12 pt-5 pb-2 flex items-center justify-center text-[11px] tracking-[0.2em] uppercase text-charcoal/35">
-        <span>Page {pageNo}</span>
+    <div
+      className={`group/cell px-2 md:px-3 pt-[3px] pb-1 min-w-0 hover:bg-sand/15 transition-colors ${anim ? 'animate-word-rise' : ''}`}
+      style={anim ? { animationDelay: `${Math.min(index, 8) * 40}ms` } : undefined}
+    >
+      {/* 释义：完整多行显示，不截断 */}
+      <div className="pb-1 min-w-0" style={{ minHeight: f.defMinH }}>
+        <button
+          onClick={() => onToggleDef(w.id)}
+          aria-pressed={defHidden}
+          title={defHidden ? '点击显示释义' : full}
+          style={f.def}
+          className="w-full text-charcoal/60 leading-snug text-left rounded -mx-1 px-1 transition-colors duration-150 hover:bg-sand/50 focus-visible:outline-2 focus-visible:outline-clay focus-visible:outline-offset-4"
+        >
+          {defHidden ? <Covered text={full} /> : full}
+        </button>
       </div>
-
-      {/* 多列单词：一行横线上多个单词，单词在线上方、释义在线下方 */}
-      <div className="relative grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5 flex-1 content-start px-9 md:px-11">
-        {words.map((w, i) => {
-          // 基线 + 手动例外：手动点过的词用其绝对状态，其余跟随基线（无优先级，最后操作者生效）
-          const wordHidden = w.id in wordDiff ? wordDiff[w.id] : hideAllWord
-          const defHidden = w.id in defDiff ? defDiff[w.id] : hideAllDef
-          const full = formatDefinitions(w)
-          return (
-            <div
-              key={w.id}
-              className={`group/cell px-2 md:px-3 hover:bg-sand/15 transition-colors ${wordsAnim ? 'animate-word-rise' : ''}`}
-              style={wordsAnim ? { animationDelay: `${Math.min(i, 8) * 40}ms` } : undefined}
-              onClick={() => {
-                onClearRemove()
-              }}
+      {/* 标签行：已有标签 chips（纯展示，字号随字号联动）+ 扳手按钮（管理标签，增删都在面板内） */}
+      <div className="mt-1 flex items-center gap-1 min-w-0">
+        <div className="flex items-center gap-1 min-w-0 overflow-hidden">
+          {w.tags.map((tid) => (
+            <span
+              key={tid}
+              style={{ fontSize: f.chipFont }}
+              className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded font-medium bg-sage/50 text-charcoal/70"
             >
-              {/* 单词（横线上方，底部贴线）+ 音标：单词隐藏时一起晕开 */}
-              <div className="flex items-end gap-2 min-w-0" style={{ height: f.rowH }}>
-                <button
-                  onClick={() => onToggleWord(w.id)}
-                  aria-pressed={wordHidden}
-                  title={wordHidden ? '点击显示单词' : '点击遮挡单词，回忆拼写'}
-                  style={f.word}
-                  className="font-serif text-charcoal tracking-wide leading-none pb-[3px] truncate rounded -mx-1 px-1 transition-colors duration-150 hover:bg-sand/50 focus-visible:outline-2 focus-visible:outline-clay focus-visible:outline-offset-4"
-                >
-                  {wordHidden ? <Covered text={w.spelling} /> : w.spelling}
-                </button>
-                {w.phonetic && (
-                  <span
-                    style={f.phonetic}
-                    className="shrink-0 text-charcoal/40 tracking-wide leading-none pb-[4px] truncate"
-                  >
-                    {wordHidden ? <Covered text={w.phonetic} /> : w.phonetic}
-                  </span>
-                )}
-              </div>
-              {/* 横线 */}
-              <div
-                aria-hidden="true"
-                className="h-px bg-[#E7DAC6] transition-colors duration-300 group-hover/cell:bg-clay/50"
-              />
-              {/* 释义（横线下方）：可换行显示，最多 3 行，不再压缩成一行 */}
-              <div className="pt-[3px] pb-1 min-w-0" style={{ minHeight: f.defMinH }}>
-                <button
-                  onClick={() => onToggleDef(w.id)}
-                  aria-pressed={defHidden}
-                  title={defHidden ? '点击显示释义' : full}
-                  style={f.def}
-                  className="w-full text-charcoal/60 leading-snug line-clamp-3 text-left rounded -mx-1 px-1 transition-colors duration-150 hover:bg-sand/50 focus-visible:outline-2 focus-visible:outline-clay focus-visible:outline-offset-4"
-                >
-                  {defHidden ? <Covered text={full} /> : full}
-                </button>
-              </div>
-              {/* 标签行：已有标签 chips（点击移除）+ 添加按钮 */}
-              <div className="mt-1 flex items-center gap-1 min-w-0">
-                <div className="flex items-center gap-1 min-w-0 overflow-hidden">
-                  {w.tags.map((tid) => {
-                    const pending = pendingRemove?.w.id === w.id && pendingRemove.tid === tid
-                    return (
-                      <button
-                        key={tid}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          onToggleRemove(w, tid)
-                        }}
-                        title={pending ? '再点一次确认移除' : `移除标签「${tagName.get(tid) ?? tid}」`}
-                        aria-pressed={pending}
-                        className={`shrink-0 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors ${
-                          pending
-                            ? 'bg-clay text-ivory'
-                            : 'bg-sage/50 text-charcoal/70 hover:bg-sage/80 hover:text-charcoal'
-                        }`}
-                      >
-                        {pending ? '确认移除？' : tagName.get(tid) ?? tid}
-                        {!pending && <span className="text-charcoal/40 group-hover/cell:text-charcoal/70">✕</span>}
-                      </button>
-                    )
-                  })}
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onOpenQuick(w)
-                  }}
-                  title="添加标签"
-                  aria-label={`给 ${w.spelling} 添加标签`}
-                  className="shrink-0 w-4 h-4 rounded-full flex items-center justify-center text-charcoal/25 hover:text-clay hover:bg-sand/50 transition-colors"
-                >
-                  <PlusIcon className="w-3 h-3" />
-                </button>
-              </div>
-            </div>
-          )
-        })}
-      </div>
-
-      {/* 页脚：进度条 + 页码 */}
-      <div className="relative px-10 md:px-12 pt-6 pb-5">
-        <div className="h-0.5 bg-charcoal/10 rounded-full overflow-hidden">
-          <div
-            className="h-full bg-clay rounded-full transition-all duration-300"
-            style={{ width: `${pct}%` }}
-          />
+              {tagName.get(tid) ?? tid}
+            </span>
+          ))}
         </div>
-        <p className="mt-3 text-center text-[11px] tracking-[0.2em] uppercase text-charcoal/30">
-          第 {pageNo} 页 · 共 {d?.total_pages ?? 0} 页
-        </p>
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            onOpenQuick(w)
+          }}
+          title="管理标签"
+          aria-label={`管理 ${w.spelling} 的标签`}
+          style={{ width: f.iconSize + 6, height: f.iconSize + 6 }}
+          className="shrink-0 rounded-full flex items-center justify-center text-charcoal/25 hover:text-clay hover:bg-sand/50 transition-colors"
+        >
+          <WrenchIcon className="" style={{ width: f.iconSize, height: f.iconSize }} />
+        </button>
       </div>
     </div>
   )
 })
 
 export default function PaperBookView({
-  data,
-  page,
-  onPrev,
-  onNext,
+  pages,
+  loading,
+  onReachEnd,
   onAddFirst,
   fontScale,
   hideAllWord,
@@ -249,209 +227,73 @@ export default function PaperBookView({
   defDiff,
   onToggleWord,
   onToggleDef,
-  prevPage,
-  nextPage,
   tags: allTags,
   onTagsUpdated,
   onTagsCreated,
 }: Props) {
   // 快速标签编辑：当前目标单词（null = 未打开）
   const [quickWord, setQuickWord] = useState<Word | null>(null)
-  // 标签 id → 名称映射（词块 chips）；引用稳定，避免拖动时 Sheet 重渲染
+  // 标签 id → 名称映射（词块 chips）；引用稳定，避免低频状态变化时重渲染
   const tagName = useMemo(() => new Map(allTags.map((t) => [t.id, t.name])), [allTags])
-  // 滑动翻页：offset 单位 = 页宽（0 = 当前页；-1 = 右侧相邻页可见；+1 = 左侧相邻页可见）
-  const [offset, setOffset] = useState(0)
-  const [sliding, setSliding] = useState(false)
-  // 轨道 DOM 引用：拖动中直接改 transform/transition，避免每帧 setState 重渲染整棵轨道
-  const trackRef = useRef<HTMLDivElement | null>(null)
-  // 轨道 key：翻页完成时重挂载轨道，保证复位位（中间页对齐）绝无过渡动画
-  const [trackKey, setTrackKey] = useState(0)
-  // 单词行进入动画：仅首次加载播放；翻页后抑制（重挂载不再触发淡入）
+  // 单词行进入动画：仅首屏播放；滚动追加的页不播（避免滚动时动画干扰）
   const [wordsAnim, setWordsAnim] = useState(true)
-  // 三页轨道：[上一页, 当前页, 下一页]，拖拽中相邻页直接可见
-  const [triple, setTriple] = useState<{
-    left: { d: Page<Word> | null; pageNo: number }
-    mid: { d: Page<Word> | null; pageNo: number }
-    right: { d: Page<Word> | null; pageNo: number }
-  } | null>(null)
-  const draggingRef = useRef(false)
-  const startX = useRef(0)
-  const dxRef = useRef(0)
-  const widthRef = useRef(1)
-  const suppressClick = useRef(false)
-  const animDirRef = useRef<'next' | 'prev' | null>(null)
-  const timers = useRef<number[]>([])
-  // 滑动动画是否已结束（复位必须等动画结束，否则 cache 命中时动画被截断成闪烁）
-  const animEndedRef = useRef(true)
-  const pendingResetRef = useRef(false)
-
-  useEffect(() => () => timers.current.forEach((t) => window.clearTimeout(t)), [])
-
-  /** 数据就位复位：重排三页轨道，重挂载轨道回到对齐位（无过渡） */
-  function doReset() {
-    animDirRef.current = null
-    setSliding(false)
-    setOffset(0)
-    setTriple({
-      left: { d: prevPage, pageNo: page - 1 },
-      mid: { d: data, pageNo: page },
-      right: { d: nextPage, pageNo: page + 1 },
-    })
-    setTrackKey((k) => k + 1)
-  }
-
-  // 当前页数据到达：动画已结束才复位（数据是动画结束后才加载的，通常立即可复位）
   useEffect(() => {
-    if (!animEndedRef.current) {
-      pendingResetRef.current = true
-      return
-    }
-    doReset()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data])
+    if (pages.length > 1) setWordsAnim(false)
+  }, [pages.length])
 
-  // 相邻页数据到达（预取完成）→ 填充对应纸位；翻页动画中更新无碍（动画结束会整体重置）
+  // 响应式列数（resize 时重排切片）；f 按字号缓存（保持 memo 词块 props 稳定）
+  const [cols, setCols] = useState(colCount)
   useEffect(() => {
-    setTriple((t) => (t ? { ...t, left: { d: prevPage, pageNo: page - 1 } } : t))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prevPage])
+    const onResize = () => setCols(colCount())
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  const f = useMemo(() => fontStyles(fontScale), [fontScale])
+  // 已加载词条扁平化（跨页连续流）
+  const allWords = useMemo(() => pages.flatMap(({ d }) => d.items), [pages])
 
+  // 哨兵：observer 随 pages 长度/加载状态重建——IO 仅在相交状态变化时回调，内容不足视口时哨兵保持相交、只触发一次，
+  // 追加新页或加载结束后重建 observer 会立即重新评估相交，递归填充直到哨兵被推出视口（或到达末页）；
+  // 回调通过 refs 读最新 pages/onReachEnd
+  const pagesRef = useRef(pages)
   useEffect(() => {
-    setTriple((t) => (t ? { ...t, right: { d: nextPage, pageNo: page + 1 } } : t))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nextPage])
-
-  function turnTo(dir: 'next' | 'prev') {
-    if (sliding || !data) return
-    if (dir === 'prev' && page <= 1) return
-    if (dir === 'next' && page >= data.total_pages) return
-    animDirRef.current = dir
-    animEndedRef.current = false
-    setWordsAnim(false)
-    setSliding(true)
-    setOffset(dir === 'next' ? -1 : 1)
-    timers.current.push(
-      window.setTimeout(() => {
-        animEndedRef.current = true
-        if (dir === 'next') onNext()
-        else onPrev()
-        if (pendingResetRef.current) {
-          pendingResetRef.current = false
-          doReset()
-        }
-      }, SLIDE_MS),
+    pagesRef.current = pages
+  }, [pages])
+  const onReachEndRef = useRef(onReachEnd)
+  useEffect(() => {
+    onReachEndRef.current = onReachEnd
+  }, [onReachEnd])
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
+  const hasPages = pages.length > 0
+  // 上次触发尝试（时间 + 当时页数）：加载失败/进行中时 observer 重建会立即回调，但"无新页且 1.5s 内"跳过，
+  // 避免失败重试风暴；用户滚动（相交状态变化）或间隔后自然重试
+  const lastAttemptRef = useRef({ at: 0, len: 0 })
+  useEffect(() => {
+    if (!hasPages) return
+    const el = sentinelRef.current
+    if (!el) return
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return
+        const len = pagesRef.current.length
+        if (len === 0) return
+        const t = Date.now()
+        const last = lastAttemptRef.current
+        if (len === last.len && t - last.at < 1500) return
+        lastAttemptRef.current = { at: t, len }
+        const p = pagesRef.current[len - 1]
+        onReachEndRef.current(p.pageNo + 1, p.d.total_pages)
+      },
+      { rootMargin: '0px 0px 800px 0px' },
     )
-  }
+    io.observe(el)
+    return () => io.disconnect()
+  }, [hasPages, pages.length, loading])
 
-  // —— 键盘翻页（← / →）——
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      const t = e.target as HTMLElement
-      if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable) return
-      if (e.key === 'ArrowRight') turnTo('next')
-      if (e.key === 'ArrowLeft') turnTo('prev')
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  })
-
-  // —— 手势滑动：拖动时双页跟手平移，释放后按位移翻页或回弹 ——
-  function onPointerDown(e: React.PointerEvent) {
-    if (sliding || !data) return
-    if (e.pointerType === 'mouse' && e.button !== 0) return
-    draggingRef.current = true
-    startX.current = e.clientX
-    dxRef.current = 0
-    widthRef.current = e.currentTarget.getBoundingClientRect().width || 1
-    // 拖动中禁用过渡（直驱 DOM，零重渲染）；轨道已渲染（data 存在）
-    if (trackRef.current) trackRef.current.style.transition = 'none'
-  }
-
-  function onPointerMove(e: React.PointerEvent) {
-    if (!draggingRef.current) return
-    const dx = e.clientX - startX.current
-    // 边界限制：下一页方向（左拖）在末页禁用，上一页方向（右拖）在首页禁用
-    if (data) {
-      if (dx < 0 && page >= data.total_pages) return
-      if (dx > 0 && page <= 1) return
-    }
-    dxRef.current = dx
-    const off = Math.max(-1, Math.min(1, dx / widthRef.current))
-    // 直驱轨道 transform（与 state 同公式），拖动帧不触发 React 渲染
-    if (trackRef.current) {
-      trackRef.current.style.transform = `translateX(${(off - 1) * 33.333333}%)`
-    }
-  }
-
-  function onPointerUp() {
-    if (!draggingRef.current) return
-    draggingRef.current = false
-    // 恢复过渡（回弹/翻页动画由 state 驱动；直接写回完整值，不依赖 React 下一次渲染）
-    if (trackRef.current) trackRef.current.style.transition = TRACK_TRANSITION
-    const dx = dxRef.current
-    dxRef.current = 0
-    // 有实际拖拽位移 → 抑制随后的 click（避免误触遮挡/热区）
-    if (Math.abs(dx) > 8) suppressClick.current = true
-    const far = Math.abs(dx) / widthRef.current
-    if (dx <= -DRAG_THRESHOLD_PX || (dx < 0 && far > 0.18)) turnTo('next')
-    else if (dx >= DRAG_THRESHOLD_PX || (dx > 0 && far > 0.18)) turnTo('prev')
-    else setOffset(0) // 未过阈值：回弹
-  }
-
-  // —— 电子书式点击翻页：左 1/3 上一页，右 1/3 下一页 ——
-  function onPaperClick(e: React.MouseEvent) {
-    if (suppressClick.current) {
-      suppressClick.current = false
-      return
-    }
-    if ((e.target as HTMLElement).closest('button')) return
-    if (sliding || !data) return
-    const rect = e.currentTarget.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    if (x < rect.width / 3) turnTo('prev')
-    else if (x > (rect.width * 2) / 3) turnTo('next')
-  }
-
-  /** 打开单词快速标签编辑 */
+  /** 打开单词标签管理（增删都在面板内完成） */
   const openQuick = useCallback((w: Word) => {
     setQuickWord(w)
   }, [])
-
-  /** 词块 chips 移除单个标签：全量替换该词标签集 */
-  async function removeTag(w: Word, tagId: number) {
-    const next = w.tags.filter((id) => id !== tagId)
-    try {
-      await words.updateTags(w.wordbook_id, w.id, next)
-      handleTagsUpdated()
-    } catch (e) {
-      window.alert(e instanceof Error ? e.message : '保存失败')
-    }
-  }
-
-  // 待确认移除的标签（防误触：chip 第一次点击进确认态，第二次才删）；3 秒未操作自动恢复
-  const [pendingRemove, setPendingRemove] = useState<{ w: Word; tid: number } | null>(null)
-
-  useEffect(() => {
-    if (!pendingRemove) return
-    const t = window.setTimeout(() => setPendingRemove(null), 3000)
-    return () => window.clearTimeout(t)
-  }, [pendingRemove])
-
-  /** 标签 chip 点击：非确认态 → 进入确认态；确认态（同词同标签）→ 执行移除 */
-  const toggleRemoveTag = useCallback(
-    (w: Word, tid: number) => {
-      if (pendingRemove && pendingRemove.w.id === w.id && pendingRemove.tid === tid) {
-        setPendingRemove(null)
-        removeTag(w, tid)
-      } else {
-        setPendingRemove({ w, tid })
-      }
-    },
-    [pendingRemove],
-  )
-
-  /** 取消待确认移除（引用稳定，供 Sheet memo 使用） */
-  const clearRemove = useCallback(() => setPendingRemove(null), [])
 
   /** 标签变更后：抑制词行重播动画，再通知父级刷新 */
   function handleTagsUpdated() {
@@ -459,9 +301,11 @@ export default function PaperBookView({
     onTagsUpdated()
   }
 
-  if (!data) return <p className="text-center text-charcoal/40 py-24 animate-pulse">加载中…</p>
+  if (pages.length === 0) {
+    return <p className="text-center text-charcoal/40 py-24 animate-pulse">加载中…</p>
+  }
 
-  if (data.items.length === 0) {
+  if (pages[0].d.items.length === 0) {
     return (
       <div className="max-w-md mx-auto text-center py-16 animate-fade-in-up">
         <div className="mx-auto w-20 h-20 rounded-2xl bg-sand/40 flex items-center justify-center text-clay">
@@ -481,114 +325,67 @@ export default function PaperBookView({
   }
 
   return (
-    <div>
-      {/* 纸堆：下层露出一张纸（书芯），上层可滑动/点击翻页 */}
-      <div className="relative w-full group">
-        {/* 下层纸 */}
-        <div
-          aria-hidden="true"
-          className="absolute inset-0 rounded-2xl bg-[#F2EAE0] shadow-sm border border-charcoal/5 translate-x-2 translate-y-2"
-        />
-        {/* 舞台：裁切滑动区 */}
-        <div
-          className="relative overflow-hidden rounded-2xl bg-[#FDFAF4] border border-charcoal/5 shadow-[0_8px_24px_rgb(47_42_37/0.06)] cursor-pointer"
-          style={{ touchAction: 'pan-y' }}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerLeave={onPointerUp}
-          onPointerCancel={onPointerUp}
-          onClick={onPaperClick}
-        >
-          {/* 左右翻页热区提示（桌面 hover 显示，淡入淡出）；首页/末页移除 hover 类，箭头永不显示 */}
-          <div
-            aria-hidden="true"
-            className={`absolute inset-y-0 left-0 w-1/3 flex items-center pl-3 pointer-events-none opacity-0 transition-opacity z-10 ${
-              page > 1 ? 'md:group-hover:opacity-30' : ''
-            }`}
-          >
-            <ChevronLeftIcon className="w-7 h-7 text-charcoal/70" />
-          </div>
-          <div
-            aria-hidden="true"
-            className={`absolute inset-y-0 right-0 w-1/3 flex items-center justify-end pr-3 pointer-events-none opacity-0 transition-opacity z-10 ${
-              page < data.total_pages ? 'md:group-hover:opacity-30' : ''
-            }`}
-          >
-            <ChevronRightIcon className="w-7 h-7 text-charcoal/70" />
-          </div>
+    <div className="relative">
+      {/* 左侧装订线：贯穿整个单词流（数据按页懒加载，视觉连续） */}
+      <div aria-hidden="true" className="absolute left-5 top-0 bottom-0 w-px bg-[#E9B8BC]/70" />
 
-          {/* 三页轨道：当前页居中，相邻页在两侧（滑动时直接可见） */}
-          {/* 三页轨道：当前页居中，相邻页在两侧（滑动时直接可见）；key 变化 = 翻页完成重挂载对齐 */}
-          <div
-            key={trackKey}
-            ref={trackRef}
-            className="flex w-[300%]"
-            style={{
-              // 轨道 = 3 页宽（w-[300%]）：offset 0 = 中间页居中（平移 1 页 = 轨道 1/3），±1 = 相邻页居中
-              // 拖动中 transform/transition 由 onPointerMove 直驱 DOM 覆盖，此处仅 state 驱动的动画
-              transform: `translateX(${(offset - 1) * 33.333333}%)`,
-              transition: TRACK_TRANSITION,
-            }}
-          >
-            {triple && (
-              <>
-                <Sheet
-                  d={triple.left.d}
-                  pageNo={triple.left.pageNo}
-                  fontScale={fontScale}
-                  hideAllWord={hideAllWord}
-                  hideAllDef={hideAllDef}
-                  wordDiff={wordDiff}
-                  defDiff={defDiff}
-                  onToggleWord={onToggleWord}
-                  onToggleDef={onToggleDef}
-                  wordsAnim={wordsAnim}
-                  tagName={tagName}
-                  onOpenQuick={openQuick}
-                  pendingRemove={pendingRemove}
-                  onToggleRemove={toggleRemoveTag}
-                  onClearRemove={clearRemove}
-                />
-                <Sheet
-                  d={triple.mid.d}
-                  pageNo={triple.mid.pageNo}
-                  fontScale={fontScale}
-                  hideAllWord={hideAllWord}
-                  hideAllDef={hideAllDef}
-                  wordDiff={wordDiff}
-                  defDiff={defDiff}
-                  onToggleWord={onToggleWord}
-                  onToggleDef={onToggleDef}
-                  wordsAnim={wordsAnim}
-                  tagName={tagName}
-                  onOpenQuick={openQuick}
-                  pendingRemove={pendingRemove}
-                  onToggleRemove={toggleRemoveTag}
-                  onClearRemove={clearRemove}
-                />
-                <Sheet
-                  d={triple.right.d}
-                  pageNo={triple.right.pageNo}
-                  fontScale={fontScale}
-                  hideAllWord={hideAllWord}
-                  hideAllDef={hideAllDef}
-                  wordDiff={wordDiff}
-                  defDiff={defDiff}
-                  onToggleWord={onToggleWord}
-                  onToggleDef={onToggleDef}
-                  wordsAnim={wordsAnim}
-                  tagName={tagName}
-                  onOpenQuick={openQuick}
-                  pendingRemove={pendingRemove}
-                  onToggleRemove={toggleRemoveTag}
-                  onClearRemove={clearRemove}
-                />
-              </>
-            )}
-          </div>
+      <div className="relative px-9 md:px-11 pt-6">
+        {/* 连续网格：词条按"行组"切片（每行 cols 个）——先全部单词区填满一行 → 横线行（同行天然对齐）→ 释义行 → 下一行组；页边界不断行 */}
+        <div
+          className="grid content-start"
+          style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
+        >
+          {Array.from({ length: Math.ceil(allWords.length / cols) }, (_, ci) => {
+            const chunk = allWords.slice(ci * cols, ci * cols + cols)
+            // 末行组不满 cols 时补空占位：grid 流式填充下若行 1 填不满，横线会串入单词行导致列错位
+            // 三个区各自独立占位（同父级 key 必须唯一）
+            const pads = (tag: string) =>
+              Array.from({ length: cols - chunk.length }, (_, pi) => (
+                <span key={`${tag}${ci}-${pi}`} aria-hidden="true" className="min-w-0" />
+              ))
+            return (
+              <Fragment key={ci}>
+                {chunk.map((w, i) => (
+                  <WordLineCell
+                    key={`w${w.id}`}
+                    w={w}
+                    anim={wordsAnim}
+                    index={ci * cols + i}
+                    f={f}
+                    hideAllWord={hideAllWord}
+                    wordDiff={wordDiff}
+                    onToggleWord={onToggleWord}
+                  />
+                ))}
+                {pads('w')}
+                {/* 横线：独占一行，同一行组内所有横线同一条水平线 */}
+                {chunk.map((w) => (
+                  <div key={`l${w.id}`} aria-hidden="true" className="h-px bg-[#E7DAC6]" />
+                ))}
+                {pads('l')}
+                {chunk.map((w, i) => (
+                  <WordDefCell
+                    key={`d${w.id}`}
+                    w={w}
+                    anim={wordsAnim}
+                    index={ci * cols + i}
+                    f={f}
+                    hideAllDef={hideAllDef}
+                    defDiff={defDiff}
+                    onToggleDef={onToggleDef}
+                    tagName={tagName}
+                    onOpenQuick={openQuick}
+                  />
+                ))}
+                {pads('d')}
+              </Fragment>
+            )
+          })}
         </div>
       </div>
+
+      {loading && <p className="text-center text-charcoal/40 py-8 animate-pulse">加载中…</p>}
+      <div ref={sentinelRef} aria-hidden="true" className="h-px" />
 
       {quickWord && (
         <TagQuickModal
