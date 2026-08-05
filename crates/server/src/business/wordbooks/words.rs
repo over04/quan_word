@@ -12,5 +12,6 @@ pub mod router;
 mod service;
 mod sort;
 mod sort_dir;
+pub mod tag_group;
 pub mod tag_match;
 mod template_format;

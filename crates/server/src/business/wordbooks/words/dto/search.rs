@@ -8,8 +8,6 @@ pub struct SearchWordsQuery {
     pub q: Option<String>,
     pub sort: Option<String>,
     pub order: Option<String>,
-    /// 标签筛选（逗号分隔的标签 id，多选交集）
-    pub tag: Option<String>,
-    /// 标签匹配模式：and=交集（默认）/ or=并集
-    pub tag_match: Option<String>,
+    /// 标签筛选（组数组 JSON）：[{"mode":"and"|"or","ids":[1,2]},...]；组间取交集，组内按 mode
+    pub tag_groups: Option<String>,
 }

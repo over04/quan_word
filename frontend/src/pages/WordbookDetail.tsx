@@ -6,10 +6,12 @@ import {
   words,
   type Page,
   type Tag,
+  type TagFilter,
   type Word,
   type Wordbook,
 } from '../api'
 import PaperBookView from '../components/PaperBookView'
+import TagFilterPanel from '../components/TagFilterPanel'
 import TagManageModal from '../components/TagManageModal'
 import ConfirmModal from '../components/ConfirmModal'
 import WordTable from '../components/WordTable'
@@ -67,25 +69,61 @@ function loadCover(bookId: number): CoverState {
   }
 }
 
-/** 标签筛选（按书持久化）：非法值过滤，损坏回退空 */
-function loadFilterTags(bookId: number): number[] {
+/** 标签筛选（按书持久化）：{groups, links} 组数组 + 组间连接词；旧单组结构（qw_filter_tags_ 与 qw_filter_match_ key）自动迁移后清除；损坏回退空 */
+function loadTagFilter(bookId: number): TagFilter {
+  const legacyKey = `qw_filter_tags_${bookId}`
+  const legacyMatchKey = `qw_filter_match_${bookId}`
   try {
-    const raw = localStorage.getItem(`qw_filter_tags_${bookId}`)
-    if (!raw) return []
+    const legacyMatch = localStorage.getItem(legacyMatchKey)
+    const legacyRaw = localStorage.getItem(legacyKey)
+    if (legacyRaw !== null || legacyMatch !== null) {
+      // 旧结构迁移：单组（旧匹配模式 + 旧标签 ids），无连接词
+      let ids: number[] = []
+      try {
+        const p = JSON.parse(legacyRaw ?? '[]')
+        if (Array.isArray(p)) ids = p.filter((x) => Number.isFinite(x)).map(Number)
+      } catch {
+        // 旧值损坏：按空筛选迁移
+      }
+      const f: TagFilter =
+        ids.length > 0
+          ? { groups: [{ mode: legacyMatch === 'or' ? 'or' : 'and', ids }], links: [] }
+          : { groups: [], links: [] }
+      localStorage.removeItem(legacyKey)
+      localStorage.removeItem(legacyMatchKey)
+      return f
+    }
+    const raw = localStorage.getItem(`qw_filter_${bookId}`)
+    if (!raw) return { groups: [], links: [] }
     const p = JSON.parse(raw)
-    if (!Array.isArray(p)) return []
-    return p.filter((x) => Number.isFinite(x)).map(Number)
+    if (!p || typeof p !== 'object' || !Array.isArray(p.groups) || !Array.isArray(p.links)) {
+      return { groups: [], links: [] }
+    }
+    const groups = (p.groups as Array<{ mode?: unknown; ids?: unknown }>)
+      .filter(
+        (g) =>
+          g !== null &&
+          (g.mode === 'and' || g.mode === 'or' || g.mode === 'none') &&
+          Array.isArray(g.ids),
+      )
+      .map((g) =>
+        g.mode === 'none'
+          ? { mode: 'none' as const, ids: [] as number[] }
+          : {
+              mode: g.mode as 'and' | 'or',
+              ids: (g.ids as unknown[]).filter((x) => Number.isFinite(x)).map(Number),
+            },
+      )
+      .filter((g) => g.mode === 'none' || g.ids.length > 0)
+    return {
+      groups,
+      // links 长度必须 = 组数 - 1，多余截断、不足不补（后端会拒绝，前端修正后发送）
+      links: (p.links as unknown[])
+        .filter((l) => l === 'and' || l === 'or')
+        .slice(0, Math.max(0, groups.length - 1)) as ('and' | 'or')[],
+    }
   } catch {
-    return []
-  }
-}
-
-/** 标签匹配模式（按书持久化）：and=全部匹配 / or=任一匹配；非法值回退 and */
-function loadFilterMatch(bookId: number): 'and' | 'or' {
-  try {
-    return localStorage.getItem(`qw_filter_match_${bookId}`) === 'or' ? 'or' : 'and'
-  } catch {
-    return 'and'
+    return { groups: [], links: [] }
   }
 }
 
@@ -137,23 +175,18 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
   const [editing, setEditing] = useState<Word | null>(null)
   // 待确认删除的词（ConfirmModal 替换原生 confirm）
   const [pendingDelete, setPendingDelete] = useState<Word | null>(null)
-  // 标签：该书全部标签 + 筛选（多选交集，两模式共享）+ 管理弹窗；筛选按书持久化，刷新后恢复
+  // 标签：该书全部标签 + 筛选（组数组：组间且、组内 and/or，两模式共享）+ 管理弹窗；筛选按书持久化，刷新后恢复
   const [tags, setTags] = useState<Tag[]>([])
-  const [filterTagIds, setFilterTagIds] = useState<number[]>(() => loadFilterTags(bookId))
+  const [tagFilter, setTagFilter] = useState<TagFilter>(() => loadTagFilter(bookId))
   useEffect(() => {
-    localStorage.setItem(`qw_filter_tags_${bookId}`, JSON.stringify(filterTagIds))
-  }, [filterTagIds, bookId])
-  // 标签匹配模式：and=全部匹配（交集）/ or=任一匹配（并集）；按书持久化
-  const [filterMatch, setFilterMatch] = useState<'and' | 'or'>(() => loadFilterMatch(bookId))
-  useEffect(() => {
-    localStorage.setItem(`qw_filter_match_${bookId}`, filterMatch)
-  }, [filterMatch, bookId])
+    localStorage.setItem(`qw_filter_${bookId}`, JSON.stringify(tagFilter))
+  }, [tagFilter, bookId])
   const [tagFilterOpen, setTagFilterOpen] = useState(false)
   const [manageTagsOpen, setManageTagsOpen] = useState(false)
   // 列表模式刷新信号：增删改后递增，WordTable 重新查询
   const [listRefresh, setListRefresh] = useState(0)
 
-  // 分页缓存：key = `${bookId}:${page}:${size}:${seed}:${tagIds}`，避免重复请求
+  // 分页缓存：key = `${bookId}:${page}:${size}:${seed}:${filter}`，避免重复请求
   const cache = useRef<Map<string, Page<Word>>>(new Map())
   // 请求序号：筛选/打乱/重载快速连续操作时丢弃过期响应（最后一次调用生效）
   const seqRef = useRef(0)
@@ -201,19 +234,17 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     p: number,
     size: number,
     seed: string | null,
-    tagIds: number[],
-    match: 'and' | 'or',
+    tagFilter: TagFilter,
   ): Promise<Page<Word> | null> {
-    const key = `${bookId}:${p}:${size}:${seed ?? ''}:${match}:${tagIds.join(',')}`
+    const key = `${bookId}:${p}:${size}:${seed ?? ''}:${JSON.stringify(tagFilter)}`
     const cached = cache.current.get(key)
     if (cached) return cached
     const running = inflight.current.get(key)
     if (running) return running
-    const tagParam = tagIds.length > 0 ? tagIds.join(',') : undefined
     const prom = words
       .list(bookId, p, size, {
         ...(seed ? { order: 'random', seed } : {}),
-        ...(tagParam ? { tag: tagParam, tagMatch: match } : {}),
+        tagGroups: tagFilter,
       })
       .then((r) => {
         cache.current.set(key, r)
@@ -235,41 +266,39 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     p: number,
     size: number,
     seed: string | null,
-    tagIds: number[],
-    match: 'and' | 'or',
+    tagFilter: TagFilter,
   ): Promise<Page<Word> | null> {
     const seq = ++seqRef.current
-    const r = await fetchPageRaw(p, size, seed, tagIds, match)
+    const r = await fetchPageRaw(p, size, seed, tagFilter)
     if (seq !== seqRef.current) return null // 过期响应：丢弃
     return r
   }
 
   /** 后台预取下一页填缓存（不 setState）；已缓存/越界跳过 */
-  function prefetchNext(p: number, totalPages: number, seed: string | null, tagIds: number[], size: number, match: 'and' | 'or') {
+  function prefetchNext(p: number, totalPages: number, seed: string | null, tagFilter: TagFilter, size: number) {
     if (p > totalPages) return
-    const key = `${bookId}:${p}:${size}:${seed ?? ''}:${match}:${tagIds.join(',')}`
+    const key = `${bookId}:${p}:${size}:${seed ?? ''}:${JSON.stringify(tagFilter)}`
     if (cache.current.has(key)) return
-    void fetchPageRaw(p, size, seed, tagIds, match)
+    void fetchPageRaw(p, size, seed, tagFilter)
   }
 
   /** 从第 p 页开始重建；不清空 pages，新数据到达才整体替换（避免加载闪白） */
-  async function loadFrom(p: number, opts?: { seed?: string | null; tagIds?: number[]; size?: number; tagMatch?: 'and' | 'or' }) {
+  async function loadFrom(p: number, opts?: { seed?: string | null; tagFilter?: TagFilter; size?: number }) {
     const size = opts?.size ?? pageSize
     const seed = opts?.seed !== undefined ? opts.seed : shuffleSeed
-    const tagIds = opts?.tagIds ?? filterTagIds
-    const tagMatch = opts?.tagMatch ?? filterMatch
+    const activeFilter = opts?.tagFilter ?? tagFilter
     let target = p
-    let paged = await fetchPage(target, size, seed, tagIds, tagMatch)
+    let paged = await fetchPage(target, size, seed, activeFilter)
     // 空页回退：持久化页码越界（词被删页数减少）或删除后当前页删空 → 逐页回退到有数据的页
     while (paged && paged.items.length === 0 && target > 1) {
       target -= 1
-      paged = await fetchPage(target, size, seed, tagIds, tagMatch)
+      paged = await fetchPage(target, size, seed, activeFilter)
     }
     if (!paged) return // 过期或失败：不更新 UI
     setError('')
     setPages([{ d: paged, pageNo: target }])
-    prefetchNext(target + 1, paged.total_pages, seed, tagIds, size, tagMatch)
-    prefetchNext(target + 2, paged.total_pages, seed, tagIds, size, tagMatch)
+    prefetchNext(target + 1, paged.total_pages, seed, activeFilter, size)
+    prefetchNext(target + 2, paged.total_pages, seed, activeFilter, size)
   }
 
   /** 哨兵回调：加载下一页并追加；loadingMoreRef 防重入；已到末页 no-op */
@@ -278,15 +307,15 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
       if (loadingMoreRef.current || nextPageNo > totalPages) return
       loadingMoreRef.current = true
       setLoadingMore(true)
-      const d = await fetchPage(nextPageNo, pageSize, shuffleSeed, filterTagIds, filterMatch)
+      const d = await fetchPage(nextPageNo, pageSize, shuffleSeed, tagFilter)
       loadingMoreRef.current = false
       setLoadingMore(false)
       if (d && d.items.length > 0) {
         setPages((p) => [...p, { d, pageNo: nextPageNo }])
-        prefetchNext(nextPageNo + 1, d.total_pages, shuffleSeed, filterTagIds, pageSize, filterMatch)
+        prefetchNext(nextPageNo + 1, d.total_pages, shuffleSeed, tagFilter, pageSize)
       }
     },
-    [bookId, pageSize, shuffleSeed, filterTagIds, filterMatch],
+    [bookId, pageSize, shuffleSeed, tagFilter],
   )
 
   /** 打乱 / 恢复顺序：换 seed 并清缓存重载第 1 页（作用于当前标签筛选后的集合）；遮挡状态按词 id 存储，与顺序无关，保持 */
@@ -294,7 +323,7 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     const seed = shuffleSeed ? null : String(Date.now())
     setShuffleSeed(seed)
     cache.current.clear()
-    loadFrom(1, { seed, tagIds: filterTagIds, tagMatch: filterMatch })
+    loadFrom(1, { seed, tagFilter })
   }
 
   /** 重新打乱：保持打乱开启，换新 seed（仅打乱状态下可点）；遮挡状态保持 */
@@ -303,31 +332,25 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     const seed = String(Date.now())
     setShuffleSeed(seed)
     cache.current.clear()
-    loadFrom(1, { seed, tagIds: filterTagIds, tagMatch: filterMatch })
+    loadFrom(1, { seed, tagFilter })
   }
 
-  /** 标签筛选变更：更新状态并清缓存重载第 1 页（打乱状态保持，重新作用于新集合） */
-  function changeTagFilter(next: number[]) {
-    setFilterTagIds(next)
-    cache.current.clear()
-    loadFrom(1, { seed: shuffleSeed, tagIds: next })
+  /** 标签筛选变更：函数式更新（连续操作按序应用）；清缓存与重载由 tagFilter effect 统一处理 */
+  function applyTagFilter(updater: (prev: TagFilter) => TagFilter) {
+    setTagFilter(updater)
   }
 
-  function toggleTagFilter(id: number) {
-    if (filterTagIds.includes(id)) {
-      changeTagFilter(filterTagIds.filter((x) => x !== id))
-    } else {
-      changeTagFilter([...filterTagIds, id])
+  // 筛选变更（跳过首次挂载）：清缓存重载第 1 页（打乱状态保持，重新作用于新集合）
+  const firstFilterRef = useRef(true)
+  useEffect(() => {
+    if (firstFilterRef.current) {
+      firstFilterRef.current = false
+      return
     }
-  }
-
-  /** 切换标签匹配模式（全部匹配/任一匹配）：清缓存重载第 1 页（打乱状态保持，重新作用于新集合） */
-  function changeTagMatch(m: 'and' | 'or') {
-    if (m === filterMatch) return
-    setFilterMatch(m)
     cache.current.clear()
-    loadFrom(1, { seed: shuffleSeed, tagIds: filterTagIds, tagMatch: m })
-  }
+    loadFrom(1, { seed: shuffleSeed, tagFilter })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tagFilter])
 
   /** 标签管理弹窗变更后：刷新标签列表、剔除已删除标签的筛选、重载数据 */
   async function handleTagsChanged() {
@@ -339,15 +362,16 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
       // 标签刷新失败不阻塞列表重载
     }
     const valid = new Set(fresh.map((t) => t.id))
-    const next = filterTagIds.filter((id) => valid.has(id))
-    if (next.length !== filterTagIds.length) {
-      setFilterTagIds(next)
-      cache.current.clear()
-      loadFrom(1, { seed: shuffleSeed, tagIds: next })
-    } else {
-      cache.current.clear()
-      loadFrom(pages[0]?.pageNo ?? 1)
-    }
+    setTagFilter((prev) => {
+      const next: TagFilter = {
+        groups: prev.groups
+          .map((g) => ({ ...g, ids: g.ids.filter((id) => valid.has(id)) }))
+          .filter((g) => g.mode === 'none' || g.ids.length > 0),
+        links: prev.links,
+      }
+      // 筛选未受影响：返回原引用，React bail out，不触发重载
+      return JSON.stringify(next) === JSON.stringify(prev) ? prev : next
+    })
     // 列表行内标签 chips 与词数变化：强制列表模式重新查询
     setListRefresh((k) => k + 1)
   }
@@ -459,6 +483,9 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
   // 恢复按钮按需出现：存在任何手动/基线隐藏时才有“显示”意义，平时导航栏只留两个隐藏按钮
   const hasWordOverrides = cover.hideAllWord || Object.keys(cover.wordDiff).length > 0
   const hasDefOverrides = cover.hideAllDef || Object.keys(cover.defDiff).length > 0
+  // 标签筛选：任何组有选中标签即生效；徽标显示选中标签总数
+  const hasFilter = tagFilter.groups.some((g) => g.ids.length > 0)
+  const totalSelected = tagFilter.groups.reduce((n, g) => n + g.ids.length, 0)
 
   return (
     <div className="min-h-screen">
@@ -507,15 +534,15 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
               <div className="shrink-0">
                 <button
                   onClick={() => setTagFilterOpen((o) => !o)}
-                  aria-pressed={filterTagIds.length > 0}
+                  aria-pressed={hasFilter}
                   className={`inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap ${
-                    filterTagIds.length > 0
+                    hasFilter
                       ? 'bg-charcoal text-ivory shadow-md'
                       : 'text-charcoal/70 hover:text-charcoal'
                   }`}
                 >
                   <TagIcon className="w-4 h-4" />
-                  {filterTagIds.length > 0 ? `标签(${filterTagIds.length})` : '标签'}
+                  {hasFilter ? `标签(${totalSelected})` : '标签'}
                 </button>
               </div>
               {/* 显示设置（仅纸质书模式，位置在模式切换旁） */}
@@ -634,76 +661,12 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
           )}
           {/* 标签筛选面板：渲染在滚动容器外（overflow 会裁剪绝对定位），右上角对齐胶囊 */}
           {tagFilterOpen && (
-            <div className="absolute right-0 top-12 z-50 w-72 max-w-[calc(100vw-2rem)] max-h-96 overflow-y-auto bg-white rounded-2xl border border-charcoal/10 shadow-xl shadow-charcoal/10 p-4 animate-fade-in-up">
-              <div className="flex items-center justify-between">
-                <p className="font-serif text-base text-charcoal">按标签筛选</p>
-                <button
-                  onClick={() => setTagFilterOpen(false)}
-                  className="w-7 h-7 rounded-full text-charcoal/40 hover:bg-sand/40 hover:text-charcoal transition-colors"
-                  aria-label="关闭筛选"
-                >
-                  ✕
-                </button>
-              </div>
-              {/* 匹配方式分段开关：全部匹配（交集）/ 任一匹配（并集），手机电脑一致 */}
-              <div
-                className="mt-3 grid grid-cols-2 gap-1 rounded-xl bg-sand/30 p-1"
-                role="tablist"
-                aria-label="标签匹配方式"
-              >
-                {(['and', 'or'] as const).map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => changeTagMatch(m)}
-                    aria-pressed={filterMatch === m}
-                    className={`inline-flex items-center justify-center px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
-                      filterMatch === m
-                        ? 'bg-charcoal text-ivory shadow-md'
-                        : 'text-charcoal/70 hover:bg-sand/60'
-                    }`}
-                  >
-                    {m === 'and' ? '全部匹配' : '任一匹配'}
-                  </button>
-                ))}
-              </div>
-              <p className="mt-2 text-xs text-charcoal/50">
-                {filterMatch === 'and' ? '单词需包含所有选中的标签' : '单词包含任意一个选中标签即可'}
-              </p>
-              <div className="mt-3 space-y-1">
-                <button
-                  onClick={() => changeTagFilter([])}
-                  aria-pressed={filterTagIds.length === 0}
-                  className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm transition-colors ${
-                    filterTagIds.length === 0
-                      ? 'bg-charcoal text-ivory'
-                      : 'text-charcoal/70 hover:bg-sand/40'
-                  }`}
-                >
-                  <span>全部单词</span>
-                </button>
-                {tags.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => toggleTagFilter(t.id)}
-                    aria-pressed={filterTagIds.includes(t.id)}
-                    className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm transition-colors ${
-                      filterTagIds.includes(t.id)
-                        ? 'bg-charcoal text-ivory'
-                        : 'text-charcoal/70 hover:bg-sand/40'
-                    }`}
-                  >
-                    <span className="truncate">{t.name}</span>
-                    <span
-                      className={`tabular-nums text-xs ${
-                        filterTagIds.includes(t.id) ? 'text-ivory/60' : 'text-charcoal/40'
-                      }`}
-                    >
-                      {t.word_count}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
+            <TagFilterPanel
+              tags={tags}
+              filter={tagFilter}
+              onChange={applyTagFilter}
+              onClose={() => setTagFilterOpen(false)}
+            />
           )}
           </div>
         </div>
@@ -740,8 +703,7 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
               onDelete={handleDelete}
               onMutated={onMutated}
               tags={tags}
-              tagIds={filterTagIds}
-              tagMatch={filterMatch}
+              tagFilter={tagFilter}
               onManageTags={() => setManageTagsOpen(true)}
               onTagsCreated={(tag) => setTags((prev) => [...prev, tag])}
             />

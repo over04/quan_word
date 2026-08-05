@@ -45,6 +45,22 @@ export type {
   Wordbook,
 }
 
+/** 标签筛选组：组内按 mode 匹配（and=全部命中 / or=任一命中 / none=没有任何标签） */
+export type TagFilterGroup = { mode: 'and' | 'or' | 'none'; ids: number[] }
+/** 标签筛选：组数组 + 组间连接词数组（links[i] = 组 i 与组 i+1 之间：and=且 / or=或；长度 = 组数 - 1） */
+export type TagFilter = { groups: TagFilterGroup[]; links: ('and' | 'or')[] }
+
+/** 发送前净化：剔除未选标签的空组（none 组除外）；links 重排为相邻有效组之间的连接（取后一组的紧前连接，缺省且） */
+function sanitizeTagFilter(filter: TagFilter): TagFilter {
+  const valid = filter.groups
+    .map((g, i) => ({ g, i }))
+    .filter((x) => x.g.mode === 'none' || x.g.ids.length > 0)
+  return {
+    groups: valid.map((x) => (x.g.mode === 'none' ? { mode: 'none', ids: [] } : x.g)),
+    links: valid.slice(1).map((x) => filter.links[x.i - 1] ?? 'and'),
+  }
+}
+
 const KEY_STORAGE = 'qw_api_key'
 
 /** 读取本地保存的访问密钥（无则 null）。 */
@@ -95,25 +111,25 @@ export const wordbooks = {
 }
 
 export const words = {
-  /** 纸质书浏览：可选排序（id_asc/id_desc/spelling/random）；random 需 seed（确定性打乱）；tag 逗号分隔标签 id；tagMatch: and=全部匹配（默认）/ or=任一匹配 */
-  list: (bookId: number, page: number, pageSize: number, opts?: { order?: string; seed?: string; tag?: string; tagMatch?: 'and' | 'or' }) => {
+  /** 纸质书浏览：可选排序（id_asc/id_desc/spelling/random）；random 需 seed（确定性打乱）；tagGroups 组数组 + 组间连接词（组内 and/or、组间且/或） */
+  list: (bookId: number, page: number, pageSize: number, opts?: { order?: string; seed?: string; tagGroups?: TagFilter }) => {
     const order = opts?.order ? `&order=${encodeURIComponent(opts.order)}` : ''
     const seed = opts?.seed ? `&seed=${encodeURIComponent(opts.seed)}` : ''
-    const tag = opts?.tag ? `&tag=${encodeURIComponent(opts.tag)}` : ''
-    const tagMatch = opts?.tag && opts.tagMatch ? `&tag_match=${encodeURIComponent(opts.tagMatch)}` : ''
+    const tagGroups = opts?.tagGroups && opts.tagGroups.groups.length > 0
+      ? `&tag_groups=${encodeURIComponent(JSON.stringify(sanitizeTagFilter(opts.tagGroups)))}` : ''
     return api<Page<Word>>(
-      `/api/wordbooks/${bookId}/words?page=${page}&page_size=${pageSize}${order}${seed}${tag}${tagMatch}`,
+      `/api/wordbooks/${bookId}/words?page=${page}&page_size=${pageSize}${order}${seed}${tagGroups}`,
     )
   },
-  /** 列表模式查询：书内搜索（spelling/释义）+ 排序 + 标签筛选（tagMatch: and=全部匹配（默认）/ or=任一匹配）+ 分页 */
-  query: (bookId: number, page: number, pageSize: number, opts?: { q?: string; sort?: string; order?: string; tag?: string; tagMatch?: 'and' | 'or' }) => {
+  /** 列表模式查询：书内搜索（spelling/释义）+ 排序 + 标签筛选（tagGroups 组数组 + 组间连接词）+ 分页 */
+  query: (bookId: number, page: number, pageSize: number, opts?: { q?: string; sort?: string; order?: string; tagGroups?: TagFilter }) => {
     const q = opts?.q ? `&q=${encodeURIComponent(opts.q)}` : ''
     const sort = opts?.sort ? `&sort=${encodeURIComponent(opts.sort)}` : ''
     const order = opts?.order ? `&order=${encodeURIComponent(opts.order)}` : ''
-    const tag = opts?.tag ? `&tag=${encodeURIComponent(opts.tag)}` : ''
-    const tagMatch = opts?.tag && opts.tagMatch ? `&tag_match=${encodeURIComponent(opts.tagMatch)}` : ''
+    const tagGroups = opts?.tagGroups && opts.tagGroups.groups.length > 0
+      ? `&tag_groups=${encodeURIComponent(JSON.stringify(sanitizeTagFilter(opts.tagGroups)))}` : ''
     return api<Page<Word>>(
-      `/api/wordbooks/${bookId}/words/query?page=${page}&page_size=${pageSize}${q}${sort}${order}${tag}${tagMatch}`,
+      `/api/wordbooks/${bookId}/words/query?page=${page}&page_size=${pageSize}${q}${sort}${order}${tagGroups}`,
     )
   },
   create: (bookId: number, req: CreateWordReq) =>

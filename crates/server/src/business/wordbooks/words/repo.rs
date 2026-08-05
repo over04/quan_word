@@ -10,6 +10,7 @@ use sea_orm::{
 
 use super::sort::SortField;
 use super::sort_dir::SortDir;
+use super::tag_group::TagGroup;
 use super::tag_match::TagMatch;
 
 /// 单词持久化访问：SeaORM 查询封装。
@@ -24,7 +25,7 @@ impl WordRepo {
         wordbook::Entity::find_by_id(book_id).one(db).await
     }
 
-    /// 浏览模式分页（id / 字母序，SQL 层排序）；`tag_ids` 非空时按标签筛选（`mode` 决定交集/并集）。
+    /// 浏览模式分页（id / 字母序，SQL 层排序）；`groups` 非空时按标签筛选（组内按 mode、组间按 links）。
     #[allow(clippy::too_many_arguments)]
     pub async fn browse_page(
         db: &DatabaseConnection,
@@ -33,13 +34,13 @@ impl WordRepo {
         dir: SortDir,
         page: u64,
         page_size: u64,
-        tag_ids: &[i32],
-        mode: TagMatch,
+        groups: &[TagGroup],
+        links: &[TagMatch],
     ) -> Result<(Vec<word::Model>, u64), sea_orm::DbErr> {
         let mut q = Self::with_tag_filter(
             word::Entity::find().filter(word::Column::WordbookId.eq(book_id)),
-            tag_ids,
-            mode,
+            groups,
+            links,
         );
         q = match dir {
             SortDir::Asc => q.order_by_asc(column),
@@ -55,16 +56,16 @@ impl WordRepo {
     pub async fn find_all_ids(
         db: &DatabaseConnection,
         book_id: i32,
-        tag_ids: &[i32],
-        mode: TagMatch,
+        groups: &[TagGroup],
+        links: &[TagMatch],
     ) -> Result<Vec<i32>, sea_orm::DbErr> {
         Self::with_tag_filter(
             word::Entity::find()
                 .select_only()
                 .column(word::Column::Id)
                 .filter(word::Column::WordbookId.eq(book_id)),
-            tag_ids,
-            mode,
+            groups,
+            links,
         )
         .into_tuple()
         .all(db)
@@ -94,13 +95,13 @@ impl WordRepo {
         dir: SortDir,
         page: u64,
         page_size: u64,
-        tag_ids: &[i32],
-        mode: TagMatch,
+        groups: &[TagGroup],
+        links: &[TagMatch],
     ) -> Result<(Vec<word::Model>, u64), sea_orm::DbErr> {
         let mut query = Self::with_tag_filter(
             word::Entity::find().filter(word::Column::WordbookId.eq(book_id)),
-            tag_ids,
-            mode,
+            groups,
+            links,
         );
         if let Some(q) = q {
             let pat = format!("%{q}%");
@@ -358,35 +359,71 @@ impl WordRepo {
             .rows_affected)
     }
 
-    /// 标签筛选：`TagMatch::And` = 交集（word 必须同时拥有全部 tag_ids）；
-    /// `TagMatch::Or` = 并集（拥有任一 tag_id 即命中）。
-    /// 交集子查询：`word_id IN (SELECT word_id FROM word_tag WHERE tag_id IN (...) GROUP BY word_id HAVING COUNT(DISTINCT tag_id) = N)`；
-    /// 并集子查询：`word_id IN (SELECT word_id FROM word_tag WHERE tag_id IN (...))`（word_tag 复合主键无重复行，无需 DISTINCT）。
+    /// 标签筛选：每个组生成一个 `word_id IN (子查询)` 条件，组间按 `links` 组合，
+    /// **「且」优先于「或」**（标准布尔优先级，`links[i]` 连接组 `i` 与组 `i+1`）：
+    /// 先按「或」把组序列切成段，段内全部「且」连接，段间「或」连接。
+    /// And 组 = 交集子查询（`tag_id IN (...) GROUP BY word_id HAVING COUNT(DISTINCT tag_id) = N`）；
+    /// Or 组 = 并集子查询（`tag_id IN (...)`，word_tag 复合主键无重复行，无需 DISTINCT）。
     fn with_tag_filter(
-        mut query: Select<word::Entity>,
-        tag_ids: &[i32],
-        mode: TagMatch,
+        query: Select<word::Entity>,
+        groups: &[TagGroup],
+        links: &[TagMatch],
     ) -> Select<word::Entity> {
-        if tag_ids.is_empty() {
-            return query;
+        // 按「或」链接切段：段内全 and、段间 or
+        let mut segments: Vec<Vec<Condition>> = Vec::new();
+        let mut cur: Vec<Condition> = Vec::new();
+        for (i, g) in groups.iter().enumerate() {
+            cur.push(Self::group_condition(g));
+            if i + 1 < groups.len() && links[i] == TagMatch::Or {
+                segments.push(std::mem::take(&mut cur));
+            }
+        }
+        if !cur.is_empty() {
+            segments.push(cur);
+        }
+        let mut acc: Option<Condition> = None;
+        for seg in segments {
+            let mut seg_cond = Condition::all();
+            for c in seg {
+                seg_cond = seg_cond.add(c);
+            }
+            acc = Some(match acc {
+                None => seg_cond,
+                Some(prev) => Condition::any().add(prev).add(seg_cond),
+            });
+        }
+        match acc {
+            Some(cond) => query.filter(cond),
+            None => query,
+        }
+    }
+
+    /// 单个标签组的匹配条件：`word_id IN (子查询)`；And 组用交集子查询，Or 组用并集子查询，
+    /// None 组（无标签）用 `word_id NOT IN (全部 word_tag)`。
+    fn group_condition(g: &TagGroup) -> Condition {
+        if g.mode == TagMatch::None {
+            let sub = Query::select()
+                .column((word_tag::Entity, word_tag::Column::WordId))
+                .from(word_tag::Entity)
+                .to_owned();
+            return Condition::any().add(word::Column::Id.not_in_subquery(sub));
         }
         let mut sub = Query::select()
             .column((word_tag::Entity, word_tag::Column::WordId))
             .from(word_tag::Entity)
-            .cond_where(word_tag::Column::TagId.is_in(tag_ids.iter().copied()))
+            .cond_where(word_tag::Column::TagId.is_in(g.ids.iter().copied()))
             .to_owned();
-        if mode == TagMatch::And {
+        if g.mode == TagMatch::And {
             sub = sub
                 .group_by_col((word_tag::Entity, word_tag::Column::WordId))
                 .cond_having(
                     Expr::col((word_tag::Entity, word_tag::Column::TagId))
                         .count_distinct()
-                        .eq(tag_ids.len() as u64),
+                        .eq(g.ids.len() as u64),
                 )
                 .to_owned();
         }
-        query = query.filter(word::Column::Id.in_subquery(sub));
-        query
+        Condition::any().add(word::Column::Id.in_subquery(sub))
     }
 
     /// 事务内写入一个单词的标签关联（幂等：先删后插由调用方决定；此处仅插入）。

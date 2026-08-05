@@ -27,10 +27,10 @@ pub enum WordError {
     InvalidSortField { field: String },
     #[error("order 必须为 asc 或 desc: {dir}")]
     InvalidSortDir { dir: String },
-    #[error("不支持的标签匹配模式: {mode}，可选：and / or")]
+    #[error("不支持的标签匹配模式: {mode}，可选：and / or / none")]
     InvalidTagMatch { mode: String },
-    #[error("标签参数不合法: {tag}")]
-    InvalidTagIds { tag: String },
+    #[error("标签筛选格式不合法: {detail}（原文: {raw}）")]
+    InvalidTagGroups { raw: String, detail: String },
     #[error("标签 {tag_id} 不属于单词书 {wordbook_id}")]
     TagNotInWordbook { tag_id: i32, wordbook_id: i32 },
     #[error("请选择要添加的标签")]
@@ -115,7 +115,10 @@ mod tests {
             ApiError::BadRequest(_)
         ));
         assert!(matches!(
-            ApiError::from(WordError::InvalidTagIds { tag: "abc".into() }),
+            ApiError::from(WordError::InvalidTagGroups {
+                raw: "x".into(),
+                detail: "y".into()
+            }),
             ApiError::BadRequest(_)
         ));
     }

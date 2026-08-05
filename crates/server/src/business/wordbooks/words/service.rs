@@ -29,6 +29,7 @@ use super::pos::WordPos;
 use super::repo::WordRepo;
 use super::sort::SortField;
 use super::sort_dir::SortDir;
+use super::tag_group::TagGroupsParam;
 use super::tag_match::TagMatch;
 use crate::common::model::page::PageResp;
 use crate::common::state::{AppState, ImportCacheEntry, SHUFFLE_CACHE_CAP};
@@ -65,8 +66,7 @@ impl WordService {
         page: u64,
         page_size: u64,
         order: &WordOrder,
-        tag_match: TagMatch,
-        tag_ids: &[i32],
+        tag_groups: &TagGroupsParam,
     ) -> Result<PageResp<WordResp>, WordError> {
         let db = state.db.as_ref();
         Self::ensure_book_exists(db, book_id).await?;
@@ -80,8 +80,8 @@ impl WordService {
                     SortDir::Asc,
                     page,
                     page_size,
-                    tag_ids,
-                    tag_match,
+                    &tag_groups.groups,
+                    &tag_groups.links,
                 )
                 .await?;
                 Self::to_page_with_tags(db, models, total, page, page_size).await
@@ -94,8 +94,8 @@ impl WordService {
                     SortDir::Desc,
                     page,
                     page_size,
-                    tag_ids,
-                    tag_match,
+                    &tag_groups.groups,
+                    &tag_groups.links,
                 )
                 .await?;
                 Self::to_page_with_tags(db, models, total, page, page_size).await
@@ -108,23 +108,33 @@ impl WordService {
                     SortDir::Asc,
                     page,
                     page_size,
-                    tag_ids,
-                    tag_match,
+                    &tag_groups.groups,
+                    &tag_groups.links,
                 )
                 .await?;
                 Self::to_page_with_tags(db, models, total, page, page_size).await
             }
             // 打乱：全量 id 按 seed 确定性洗牌（跨库一致），按页取 id 切片后查单词
             WordOrder::Random(seed) => {
-                // 洗牌序列缓存：(book_id, 筛选标签 ids, 匹配模式, seed) → 完整 id 序列，避免每页请求重复全量洗牌
+                // 洗牌序列缓存：(book_id, 筛选组, 组间连接词, seed) → 完整 id 序列，避免每页请求重复全量洗牌
                 // 注意：锁 guard 立即 drop，禁止跨 await 持有（parking_lot guard 非 Send）
-                let key = (book_id, tag_ids.to_vec(), tag_match, seed.clone());
+                let key = (
+                    book_id,
+                    tag_groups.groups.clone(),
+                    tag_groups.links.clone(),
+                    seed.clone(),
+                );
                 let cached = state.shuffle_cache.lock().get(&key).cloned();
                 let ordered = match cached {
                     Some(v) => v,
                     None => {
-                        let mut ordered =
-                            WordRepo::find_all_ids(db, book_id, tag_ids, tag_match).await?;
+                        let mut ordered = WordRepo::find_all_ids(
+                            db,
+                            book_id,
+                            &tag_groups.groups,
+                            &tag_groups.links,
+                        )
+                        .await?;
                         Self::seeded_shuffle(&mut ordered, seed);
                         let mut m = state.shuffle_cache.lock();
                         if m.len() >= SHUFFLE_CACHE_CAP {
@@ -168,14 +178,21 @@ impl WordService {
         dir: SortDir,
         page: u64,
         page_size: u64,
-        tag_match: TagMatch,
-        tag_ids: &[i32],
+        tag_groups: &TagGroupsParam,
     ) -> Result<PageResp<WordResp>, WordError> {
         let db = state.db.as_ref();
         Self::ensure_book_exists(db, book_id).await?;
         let q = q.as_deref().map(str::trim).filter(|s| !s.is_empty());
         let (models, total) = WordRepo::search_page(
-            db, book_id, q, field, dir, page, page_size, tag_ids, tag_match,
+            db,
+            book_id,
+            q,
+            field,
+            dir,
+            page,
+            page_size,
+            &tag_groups.groups,
+            &tag_groups.links,
         )
         .await?;
         Self::to_page_with_tags(db, models, total, page, page_size).await
@@ -691,30 +708,53 @@ impl WordService {
         Ok(BatchTagWordsResp { tagged })
     }
 
-    /// 解析 `tag` 查询参数（逗号分隔的标签 id）：排序去重；非法输入报错。
-    pub(crate) fn parse_tag_ids(raw: Option<&str>) -> Result<Vec<i32>, WordError> {
+    /// 解析 `tag_groups` 查询参数（JSON：`{"groups":[...],"links":[...]}`）。
+    /// mode/link 均为枚举反序列化（中文错误）；校验 links 长度 = 组数 - 1、每组 ids 非空；
+    /// ids 排序去重；非法输入报错。
+    pub(crate) fn parse_tag_groups(raw: Option<&str>) -> Result<TagGroupsParam, WordError> {
         let Some(s) = raw else {
-            return Ok(Vec::new());
+            return Ok(TagGroupsParam {
+                groups: Vec::new(),
+                links: Vec::new(),
+            });
         };
         if s.trim().is_empty() {
-            return Ok(Vec::new());
+            return Ok(TagGroupsParam {
+                groups: Vec::new(),
+                links: Vec::new(),
+            });
         }
-        let mut ids = Vec::new();
-        for part in s.split(',') {
-            let t = part.trim();
-            if t.is_empty() {
-                continue;
-            }
-            match t.parse::<i32>() {
-                Ok(id) => ids.push(id),
-                Err(_) => {
-                    return Err(WordError::InvalidTagIds { tag: s.to_string() });
+        let mut param: TagGroupsParam =
+            serde_json::from_str(s).map_err(|e| WordError::InvalidTagGroups {
+                raw: s.to_string(),
+                detail: e.to_string(),
+            })?;
+        if param.links.len() != param.groups.len().saturating_sub(1) {
+            return Err(WordError::InvalidTagGroups {
+                raw: s.to_string(),
+                detail: "连接词数量必须为分组数减一".to_string(),
+            });
+        }
+        for g in &param.groups {
+            if g.mode == TagMatch::None {
+                if !g.ids.is_empty() {
+                    return Err(WordError::InvalidTagGroups {
+                        raw: s.to_string(),
+                        detail: "无标签组不能选择标签".to_string(),
+                    });
                 }
+            } else if g.ids.is_empty() {
+                return Err(WordError::InvalidTagGroups {
+                    raw: s.to_string(),
+                    detail: "分组未选择任何标签".to_string(),
+                });
             }
         }
-        ids.sort_unstable();
-        ids.dedup();
-        Ok(ids)
+        for g in &mut param.groups {
+            g.ids.sort_unstable();
+            g.ids.dedup();
+        }
+        Ok(param)
     }
 
     /// csv 模板：表头行，UTF-8 带 BOM（Excel/WPS 直接打开不乱码）。
@@ -915,6 +955,8 @@ mod tests {
 
     use super::WordService;
     use crate::business::wordbooks::words::error::WordError;
+    use crate::business::wordbooks::words::tag_group::{TagGroup, TagGroupsParam};
+    use crate::business::wordbooks::words::tag_match::TagMatch;
 
     fn definition(pos: &str, meaning: &str) -> Definition {
         Definition {
@@ -993,36 +1035,94 @@ mod tests {
     }
 
     #[test]
-    fn parse_tag_ids_dedups_and_sorts() {
+    fn parse_tag_groups_parses_groups_and_links() {
         assert_eq!(
-            WordService::parse_tag_ids(Some("3,1,2,2,1")).unwrap(),
-            vec![1, 2, 3]
-        );
-        assert_eq!(
-            WordService::parse_tag_ids(Some("1,,2")).unwrap(),
-            vec![1, 2]
-        );
-        assert_eq!(WordService::parse_tag_ids(Some(" 1 ")).unwrap(), vec![1]);
-    }
-
-    #[test]
-    fn parse_tag_ids_handles_empty() {
-        assert_eq!(WordService::parse_tag_ids(None).unwrap(), Vec::<i32>::new());
-        assert_eq!(
-            WordService::parse_tag_ids(Some("")).unwrap(),
-            Vec::<i32>::new()
-        );
-        assert_eq!(
-            WordService::parse_tag_ids(Some(" , ")).unwrap(),
-            Vec::<i32>::new()
+            WordService::parse_tag_groups(Some(
+                r#"{"groups":[{"mode":"and","ids":[5]},{"mode":"or","ids":[7,9,9,7]}],"links":["or"]}"#
+            ))
+            .unwrap(),
+            TagGroupsParam {
+                groups: vec![
+                    TagGroup {
+                        mode: TagMatch::And,
+                        ids: vec![5]
+                    },
+                    TagGroup {
+                        mode: TagMatch::Or,
+                        ids: vec![7, 9]
+                    },
+                ],
+                links: vec![TagMatch::Or],
+            }
         );
     }
 
     #[test]
-    fn parse_tag_ids_rejects_non_numeric() {
+    fn parse_tag_groups_sorts_ids_and_handles_empty_input() {
+        assert_eq!(
+            WordService::parse_tag_groups(Some(
+                r#"{"groups":[{"mode":"and","ids":[3,1,2,2,1]}],"links":[]}"#
+            ))
+            .unwrap(),
+            TagGroupsParam {
+                groups: vec![TagGroup {
+                    mode: TagMatch::And,
+                    ids: vec![1, 2, 3]
+                }],
+                links: vec![],
+            }
+        );
+        assert_eq!(
+            WordService::parse_tag_groups(None).unwrap(),
+            TagGroupsParam {
+                groups: Vec::new(),
+                links: Vec::new(),
+            }
+        );
+        assert_eq!(
+            WordService::parse_tag_groups(Some("")).unwrap(),
+            TagGroupsParam {
+                groups: Vec::new(),
+                links: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_tag_groups_rejects_bad_json() {
         assert!(matches!(
-            WordService::parse_tag_ids(Some("1,abc")),
-            Err(WordError::InvalidTagIds { tag }) if tag == "1,abc"
+            WordService::parse_tag_groups(Some(r#"{"groups":[{"mode":"and""#)),
+            Err(WordError::InvalidTagGroups { raw, detail }) if raw == r#"{"groups":[{"mode":"and""# && !detail.is_empty()
+        ));
+    }
+
+    #[test]
+    fn parse_tag_groups_rejects_bad_mode_and_link() {
+        assert!(matches!(
+            WordService::parse_tag_groups(Some(r#"{"groups":[{"mode":"xor","ids":[1]}]}"#)),
+            Err(WordError::InvalidTagGroups { raw, detail }) if raw.contains("xor") && detail.contains("不支持的标签匹配模式")
+        ));
+        assert!(matches!(
+            WordService::parse_tag_groups(Some(
+                r#"{"groups":[{"mode":"and","ids":[1]},{"mode":"or","ids":[2]}],"links":["xor"]}"#
+            )),
+            Err(WordError::InvalidTagGroups { raw, detail }) if detail.contains("不支持的连接方式")
+        ));
+    }
+
+    #[test]
+    fn parse_tag_groups_rejects_wrong_link_count_and_empty_group() {
+        assert!(matches!(
+            WordService::parse_tag_groups(Some(
+                r#"{"groups":[{"mode":"and","ids":[1]},{"mode":"or","ids":[2]}],"links":[]}"#
+            )),
+            Err(WordError::InvalidTagGroups { detail, .. }) if detail.contains("连接词数量")
+        ));
+        assert!(matches!(
+            WordService::parse_tag_groups(Some(
+                r#"{"groups":[{"mode":"and","ids":[1]},{"mode":"or","ids":[]}],"links":["and"]}"#
+            )),
+            Err(WordError::InvalidTagGroups { detail, .. }) if detail.contains("未选择任何标签")
         ));
     }
 }
