@@ -363,12 +363,21 @@ impl WordRepo {
     /// **「且」优先于「或」**（标准布尔优先级，`links[i]` 连接组 `i` 与组 `i+1`）：
     /// 先按「或」把组序列切成段，段内全部「且」连接，段间「或」连接。
     /// And 组 = 交集子查询（`tag_id IN (...) GROUP BY word_id HAVING COUNT(DISTINCT tag_id) = N`）；
-    /// Or 组 = 并集子查询（`tag_id IN (...)`，word_tag 复合主键无重复行，无需 DISTINCT）。
+    /// Or 组 = 并集子查询（`tag_id IN (...)`，word_tag 复合主键无重复行，无需 DISTINCT）；
+    /// None 组（无标签）= `word_id NOT IN (全部 word_tag)`。
     fn with_tag_filter(
         query: Select<word::Entity>,
         groups: &[TagGroup],
         links: &[TagMatch],
     ) -> Select<word::Entity> {
+        match Self::combine(groups, links) {
+            Some(cond) => query.filter(cond),
+            None => query,
+        }
+    }
+
+    /// 组序列按 links 组合（「且」优先于「或」）；空序列返回 None。
+    fn combine(groups: &[TagGroup], links: &[TagMatch]) -> Option<Condition> {
         // 按「或」链接切段：段内全 and、段间 or
         let mut segments: Vec<Vec<Condition>> = Vec::new();
         let mut cur: Vec<Condition> = Vec::new();
@@ -392,10 +401,7 @@ impl WordRepo {
                 Some(prev) => Condition::any().add(prev).add(seg_cond),
             });
         }
-        match acc {
-            Some(cond) => query.filter(cond),
-            None => query,
-        }
+        acc
     }
 
     /// 单个标签组的匹配条件：`word_id IN (子查询)`；And 组用交集子查询，Or 组用并集子查询，

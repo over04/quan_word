@@ -51,7 +51,7 @@ export type TagFilterGroup = { mode: 'and' | 'or' | 'none'; ids: number[] }
 export type TagFilter = { groups: TagFilterGroup[]; links: ('and' | 'or')[] }
 
 /** 发送前净化：剔除未选标签的空组（none 组除外）；links 重排为相邻有效组之间的连接（取后一组的紧前连接，缺省且） */
-function sanitizeTagFilter(filter: TagFilter): TagFilter {
+export function sanitizeTagFilter(filter: TagFilter): TagFilter {
   const valid = filter.groups
     .map((g, i) => ({ g, i }))
     .filter((x) => x.g.mode === 'none' || x.g.ids.length > 0)

@@ -2,7 +2,7 @@ use serde::Deserialize;
 
 use super::tag_match::TagMatch;
 
-/// 一个标签筛选组：组内标签按 `mode` 匹配（And=全部命中 / Or=任一命中）。
+/// 一个标签筛选组：组内标签按 `mode` 匹配（And=全部命中 / Or=任一命中 / None=无标签）。
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
 pub struct TagGroup {
     #[serde(

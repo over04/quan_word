@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import {
+  sanitizeTagFilter,
   tags as tagApi,
   wordbooks,
   words,
@@ -69,7 +70,7 @@ function loadCover(bookId: number): CoverState {
   }
 }
 
-/** 标签筛选（按书持久化）：{groups, links} 组数组 + 组间连接词；旧单组结构（qw_filter_tags_ 与 qw_filter_match_ key）自动迁移后清除；损坏回退空 */
+/** 标签筛选（按书持久化）：组数组 + 组间连接词；旧单组结构（qw_filter_tags_ 与 qw_filter_match_ key）自动迁移后清除；损坏回退空 */
 function loadTagFilter(bookId: number): TagFilter {
   const legacyKey = `qw_filter_tags_${bookId}`
   const legacyMatchKey = `qw_filter_match_${bookId}`
@@ -114,14 +115,13 @@ function loadTagFilter(bookId: number): TagFilter {
               ids: (g.ids as unknown[]).filter((x) => Number.isFinite(x)).map(Number),
             },
       )
-      .filter((g) => g.mode === 'none' || g.ids.length > 0)
-    return {
+    return sanitizeTagFilter({
       groups,
-      // links 长度必须 = 组数 - 1，多余截断、不足不补（后端会拒绝，前端修正后发送）
-      links: (p.links as unknown[])
-        .filter((l) => l === 'and' || l === 'or')
-        .slice(0, Math.max(0, groups.length - 1)) as ('and' | 'or')[],
-    }
+      links: (p.links as unknown[]).filter((l) => l === 'and' || l === 'or') as (
+        | 'and'
+        | 'or'
+      )[],
+    })
   } catch {
     return { groups: [], links: [] }
   }
@@ -363,12 +363,14 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     }
     const valid = new Set(fresh.map((t) => t.id))
     setTagFilter((prev) => {
-      const next: TagFilter = {
-        groups: prev.groups
-          .map((g) => ({ ...g, ids: g.ids.filter((id) => valid.has(id)) }))
-          .filter((g) => g.mode === 'none' || g.ids.length > 0),
+      // 剔除已删除标签；净化后空组自动移除
+      const next = sanitizeTagFilter({
+        groups: prev.groups.map((g) => ({
+          ...g,
+          ids: g.ids.filter((id) => valid.has(id)),
+        })),
         links: prev.links,
-      }
+      })
       // 筛选未受影响：返回原引用，React bail out，不触发重载
       return JSON.stringify(next) === JSON.stringify(prev) ? prev : next
     })
@@ -483,8 +485,8 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
   // 恢复按钮按需出现：存在任何手动/基线隐藏时才有“显示”意义，平时导航栏只留两个隐藏按钮
   const hasWordOverrides = cover.hideAllWord || Object.keys(cover.wordDiff).length > 0
   const hasDefOverrides = cover.hideAllDef || Object.keys(cover.defDiff).length > 0
-  // 标签筛选：任何组有选中标签即生效；徽标显示选中标签总数
-  const hasFilter = tagFilter.groups.some((g) => g.ids.length > 0)
+  // 标签筛选：净化后仍有有效条件（含无标签组）即生效；徽标显示选中标签总数（递归计数）
+  const hasFilter = sanitizeTagFilter(tagFilter).groups.length > 0
   const totalSelected = tagFilter.groups.reduce((n, g) => n + g.ids.length, 0)
 
   return (
@@ -542,7 +544,7 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                   }`}
                 >
                   <TagIcon className="w-4 h-4" />
-                  {hasFilter ? `标签(${totalSelected})` : '标签'}
+                  {hasFilter ? (totalSelected > 0 ? `标签(${totalSelected})` : '标签(无标签)') : '标签'}
                 </button>
               </div>
               {/* 显示设置（仅纸质书模式，位置在模式切换旁） */}
