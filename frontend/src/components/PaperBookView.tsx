@@ -185,19 +185,19 @@ const WordDefCell = memo(function WordDefCell({
           {defHidden ? <Covered text={full} /> : full}
         </button>
       </div>
-      {/* 标签行：已有标签 chips（纯展示，字号随字号联动）+ 扳手按钮（管理标签，增删都在面板内） */}
-      <div className="mt-1 flex items-center gap-1 min-w-0">
-        <div className="flex items-center gap-1 min-w-0 overflow-hidden">
-          {w.tags.map((tid) => (
-            <span
-              key={tid}
-              style={{ fontSize: f.chipFont }}
-              className="shrink-0 inline-flex items-center px-1.5 py-0.5 rounded font-medium bg-sage/50 text-charcoal/70"
-            >
-              {tagName.get(tid) ?? tid}
-            </span>
-          ))}
-        </div>
+      {/* 标签行：已有标签 chips（纯展示，字号随字号联动）+ 扳手按钮（管理标签，增删都在面板内）；
+          窄屏/标签多时 flex-wrap 自动换行完整展示（不截断），扳手为最后一项随最后一行行尾 */}
+      <div className="mt-1 flex flex-wrap items-center gap-1 min-w-0">
+        {w.tags.map((tid) => (
+          <span
+            key={tid}
+            style={{ fontSize: f.chipFont }}
+            title={tagName.get(tid) ?? String(tid)}
+            className="max-w-full truncate shrink-0 inline-flex items-center px-1.5 py-0.5 rounded font-medium bg-sage/50 text-charcoal/70"
+          >
+            {tagName.get(tid) ?? tid}
+          </span>
+        ))}
         <button
           onClick={(e) => {
             e.stopPropagation()
