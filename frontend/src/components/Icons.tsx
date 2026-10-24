@@ -247,3 +247,49 @@ export function RefreshIcon({ className }: IconProps) {
     </svg>
   )
 }
+
+export function SparkIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M12 3.5 13.7 9l5.5 1.7-5.5 1.7L12 18l-1.7-5.6L4.8 10.7 10.3 9z" />
+      <path d="m18.5 15 .6 1.9 1.9.6-1.9.6-.6 1.9-.6-1.9-1.9-.6 1.9-.6z" />
+    </svg>
+  )
+}
+
+export function LayersIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="m12 3 9 5-9 5-9-5z" />
+      <path d="m3 12 9 5 9-5" />
+      <path d="m3 16 9 5 9-5" />
+    </svg>
+  )
+}
+
+export function QuoteIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M9 7H5a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h2v1a2 2 0 0 1-2 2" />
+      <path d="M20 7h-4a2 2 0 0 0-2 2v3a2 2 0 0 0 2 2h2v1a2 2 0 0 1-2 2" />
+    </svg>
+  )
+}
+
+export function CodeIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="m8 7-5 5 5 5M16 7l5 5-5 5" />
+    </svg>
+  )
+}
+
+export function FlowIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <circle cx="4.5" cy="7" r="2" />
+      <circle cx="19.5" cy="17" r="2" />
+      <path d="M6.5 7h4a4 4 0 0 1 4 4v2a4 4 0 0 0 4 4h1" />
+    </svg>
+  )
+}

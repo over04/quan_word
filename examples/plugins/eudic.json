@@ -1,0 +1,104 @@
+{
+  "manifest": {
+    "api_version": 1,
+    "id": "eudic",
+    "label": "欧路词典",
+    "short_label": "欧路",
+    "description": "欧路迷你词条页：音标、中文释义与双语例句",
+    "version": "1.0.0",
+    "engine": "recipe",
+    "capabilities": [
+      "lookup"
+    ],
+    "hosts": [
+      "dict.eudic.net"
+    ],
+    "limits": {
+      "max_body_bytes": 1048576,
+      "max_definitions": 20,
+      "max_examples": 5
+    }
+  },
+  "recipe": {
+    "lookup": {
+      "request": {
+        "method": "get",
+        "url": "https://dict.eudic.net/minidicts/en/{word}",
+        "headers": [
+          {
+            "name": "Referer",
+            "value": "https://dict.eudic.net/"
+          }
+        ]
+      },
+      "vars": [
+        {
+          "name": "definition_text",
+          "selector": "#FCchild .exp > ol > li",
+          "all": true,
+          "transform": [
+            "clean_html",
+            {
+              "join": "；"
+            }
+          ]
+        },
+        {
+          "name": "phonetic_us",
+          "selector": "span.phonitic-line us",
+          "transform": [
+            "normalize_phonetic"
+          ]
+        },
+        {
+          "name": "phonetic_uk",
+          "selector": "span.phonitic-line uk",
+          "transform": [
+            "normalize_phonetic"
+          ]
+        }
+      ],
+      "word": {
+        "query": true
+      },
+      "phonetic": {
+        "first": [
+          {
+            "var": "phonetic_us"
+          },
+          {
+            "var": "phonetic_uk"
+          }
+        ]
+      },
+      "definitions": [
+        {
+          "kind": "pos_text",
+          "from": {
+            "var": "definition_text"
+          },
+          "separators": [
+            "；",
+            ";"
+          ]
+        }
+      ],
+      "examples": {
+        "from": {
+          "selector": "#DictLijuchild .lj_item",
+          "all": true
+        },
+        "fields": {
+          "text": {
+            "selector": "p.line"
+          },
+          "translation": {
+            "selector": "p.exp"
+          }
+        },
+        "take": 2
+      },
+      "empty": "parse"
+    }
+  }
+}

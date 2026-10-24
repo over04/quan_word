@@ -1,9 +1,30 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import DictResultList from './DictResultList'
 
 const noop = () => {}
+
+let intersectionCallback: IntersectionObserverCallback | null = null
+
+/** 结果列表用 IntersectionObserver 自动续页；测试里把回调抓出来手动触发。 */
+class MockIntersectionObserver {
+  constructor(callback: IntersectionObserverCallback) {
+    intersectionCallback = callback
+  }
+  observe() {}
+  disconnect() {}
+  unobserve() {}
+  takeRecords() {
+    return []
+  }
+}
+
+function scrollToBottom() {
+  act(() => {
+    intersectionCallback?.([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+  })
+}
 
 function makeSuggestions(count: number) {
   return Array.from({ length: count }, (_, i) => ({
@@ -27,27 +48,40 @@ function renderList(overrides: Partial<React.ComponentProps<typeof DictResultLis
   )
 }
 
-/** 结果卡是带 aria-label 的按钮（加载更多/空态按钮只有文字） */
+/** 结果卡是带 aria-label 的按钮（空态/错误态按钮只有文字） */
 function cardCount(container: HTMLElement) {
   return container.querySelectorAll('button[aria-label]').length
 }
 
-describe('DictResultList 分页', () => {
-  afterEach(cleanup)
+beforeEach(() => {
+  intersectionCallback = null
+  vi.stubGlobal('IntersectionObserver', MockIntersectionObserver)
+})
 
-  it('首屏只放 6 条，加载更多每次 +6', () => {
-    const { container } = renderList()
+afterEach(() => {
+  cleanup()
+  vi.unstubAllGlobals()
+})
+
+describe('DictResultList 分页', () => {
+  it('首屏 6 条，滚到底自动续 6 条直到全部出现', () => {
+    const { container } = renderList({ suggestions: makeSuggestions(24) })
     expect(cardCount(container)).toBe(6)
 
-    fireEvent.click(screen.getByText('加载更多（还有 3 条）'))
-    expect(cardCount(container)).toBe(9)
-    // 全部展开后按钮消失
-    expect(screen.queryByText(/加载更多/)).toBeNull()
+    scrollToBottom()
+    expect(cardCount(container)).toBe(12)
+
+    scrollToBottom()
+    expect(cardCount(container)).toBe(18)
+
+    scrollToBottom()
+    expect(cardCount(container)).toBe(24)
+    expect(container.querySelector('.dict-result-sentinel')).toBeNull()
   })
 
   it('换词后回到首屏条数', () => {
     const { container, rerender } = renderList()
-    fireEvent.click(screen.getByText(/加载更多/))
+    scrollToBottom()
     expect(cardCount(container)).toBe(9)
 
     rerender(
@@ -64,10 +98,10 @@ describe('DictResultList 分页', () => {
     expect(cardCount(container)).toBe(6)
   })
 
-  it('少于 6 条时不渲染加载更多', () => {
+  it('少于 6 条时不渲染哨兵', () => {
     const { container } = renderList({ suggestions: makeSuggestions(3) })
     expect(cardCount(container)).toBe(3)
-    expect(screen.queryByText(/加载更多/)).toBeNull()
+    expect(container.querySelector('.dict-result-sentinel')).toBeNull()
   })
 
   it('点击结果卡回调单词', () => {
@@ -80,8 +114,6 @@ describe('DictResultList 分页', () => {
 })
 
 describe('DictResultList 空态与错误态', () => {
-  afterEach(cleanup)
-
   it('无建议时给「在词典中查看」入口', () => {
     renderList({ query: 'zzz', suggestions: [] })
     expect(screen.getByText(/在词典中查看「zzz」/)).toBeTruthy()

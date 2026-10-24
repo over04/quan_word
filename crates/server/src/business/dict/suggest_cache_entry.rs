@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use super::dto::suggestion::DictSuggestion;
+use dict_core::suggestion::DictSuggestion;
 
 /// 模糊建议缓存条目。
 #[derive(Debug, Clone)]

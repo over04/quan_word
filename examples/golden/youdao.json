@@ -1,0 +1,36 @@
+{
+  "provider": "youdao",
+  "label": "有道词典",
+  "word": "abandon",
+  "phonetic": "/əˈbændən/",
+  "definitions": [
+    {
+      "pos": "vt.",
+      "meaning": "放弃，抛弃"
+    },
+    {
+      "pos": "vt.",
+      "meaning": "离弃"
+    },
+    {
+      "pos": "n.",
+      "meaning": "放任，放纵"
+    }
+  ],
+  "examples": [
+    {
+      "text": "He abandoned his car.",
+      "translation": "他丢弃了汽车。"
+    },
+    {
+      "text": "She abandoned hope.",
+      "translation": "她放弃了希望。"
+    },
+    {
+      "text": "They abandoned the plan.",
+      "translation": "他们放弃了计划。"
+    }
+  ],
+  "audio_url": null,
+  "source_url": null
+}

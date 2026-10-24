@@ -11,6 +11,9 @@ frontend/dist/*
 # 运行数据（sqlite 数据库文件）
 /data
 
+# 运行时插件目录（从设置页导入；示例包在 examples/plugins）
+/plugins/
+
 # 本地运行配置（模板见 config.example.yaml）
 /config.yaml
 

@@ -1,0 +1,115 @@
+{
+  "manifest": {
+    "api_version": 1,
+    "id": "free_dict",
+    "label": "Free Dictionary",
+    "short_label": "Free",
+    "description": "dictionaryapi.dev：英文释义、音标、音频与例句",
+    "version": "1.0.0",
+    "engine": "recipe",
+    "capabilities": [
+      "lookup"
+    ],
+    "hosts": [
+      "api.dictionaryapi.dev"
+    ],
+    "limits": {
+      "max_body_bytes": 1048576,
+      "max_definitions": 20,
+      "max_examples": 5
+    }
+  },
+  "recipe": {
+    "lookup": {
+      "request": {
+        "method": "get",
+        "url": "https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
+      },
+      "vars": [
+        {
+          "name": "entry",
+          "path": "[0]"
+        },
+        {
+          "name": "phonetic_direct",
+          "field": "phonetic",
+          "from": {
+            "var": "entry"
+          },
+          "transform": [
+            "normalize_phonetic"
+          ]
+        },
+        {
+          "name": "phonetic_text",
+          "first": [
+            {
+              "all": "[0].phonetics[*].text"
+            }
+          ],
+          "transform": [
+            "normalize_phonetic"
+          ]
+        },
+        {
+          "name": "audio",
+          "first": [
+            {
+              "all": "[0].phonetics[*].audio"
+            }
+          ]
+        }
+      ],
+      "word": {
+        "query": true
+      },
+      "phonetic": {
+        "first": [
+          {
+            "var": "phonetic_direct"
+          },
+          {
+            "var": "phonetic_text"
+          }
+        ]
+      },
+      "audio_url": {
+        "var": "audio"
+      },
+      "definitions": [
+        {
+          "kind": "groups",
+          "from": {
+            "all": "[0].meanings[*]"
+          },
+          "pos": {
+            "path": "partOfSpeech"
+          },
+          "pos_transform": [
+            "map_english_pos"
+          ],
+          "items": {
+            "all": "definitions[*].definition"
+          },
+          "transform": [
+            "clean_html"
+          ]
+        }
+      ],
+      "examples": {
+        "from": {
+          "all": "[0].meanings[*].definitions[*]"
+        },
+        "fields": {
+          "text": {
+            "path": "example"
+          }
+        },
+        "take": 3,
+        "transform": [
+          "clean_html"
+        ]
+      }
+    }
+  }
+}

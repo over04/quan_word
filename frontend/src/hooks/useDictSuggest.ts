@@ -15,6 +15,11 @@ interface CacheEntry {
 
 const cache = new Map<string, CacheEntry>()
 
+/** 插件导入/删除/启停后调用：来源变了，旧的空结果/旧建议不能继续复用。 */
+export function clearSuggestCache() {
+  cache.clear()
+}
+
 /** 模糊查词建议：输入变化自动查询，返回列表与加载态。 */
 export function useDictSuggest(input: string) {
   const [suggestions, setSuggestions] = useState<DictSuggestion[]>([])
@@ -46,11 +51,13 @@ export function useDictSuggest(input: string) {
       dict
         .suggest(word, { signal: controller.signal })
         .then((res) => {
-          const items: DictSuggestion[] =
-            res.suggestions.length > 0
-              ? res.suggestions
-              : [{ word, summary: '' }]
-          cache.set(key, { at: Date.now(), items })
+          const hasResults = res.suggestions.length > 0
+          const items: DictSuggestion[] = hasResults
+            ? res.suggestions
+            : [{ word, summary: '' }]
+          // 只缓存真实结果：空结果常常是“当时没有启用源/还没导入插件”，
+          // 缓存 10 分钟会让用户导入插件后仍然搜不出来（game 曾经踩过）。
+          if (hasResults) cache.set(key, { at: Date.now(), items })
           setSuggestions(items)
           setLoading(false)
         })

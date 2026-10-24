@@ -4,6 +4,10 @@
 @import "./styles/bench.css";
 @import "./styles/rail.css";
 @import "./styles/tag-page.css";
+@import "./styles/settings.css";
+@import "./styles/dict-home.css";
+@import "./styles/shelf.css";
+@import "./styles/book-page.css";
 
 @theme {
   --color-ivory: #f8f4ef;
@@ -316,7 +320,8 @@ input[type='search']::-webkit-search-results-button {
   top: 2px;
   bottom: 2px;
   left: 2px;
-  width: calc((100% - 4px) / 2);
+  /* 与 HomeNav 的 TABS 数量一致：查词 / 单词书 / 设置 三段 */
+  width: calc((100% - 4px) / 3);
   border-radius: 9999px;
   background-color: #fff;
   box-shadow:

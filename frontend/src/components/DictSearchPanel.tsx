@@ -8,9 +8,10 @@ import {
   useState,
 } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
-import type { DictEntry, DictProviderId, DictProviderResp } from '../api'
+import type { DictEntry, DictProviderResp } from '../api'
 import type { DictApplyMode, DictFillResult } from '../hooks/useDictFill'
 import { getProviders } from '../dictCache'
+import { buildSourceRows } from '../dictSources'
 import { useDictLookup } from '../hooks/useDictLookup'
 import { useDictSuggest } from '../hooks/useDictSuggest'
 import { usePresence } from '../hooks/usePresence'
@@ -38,18 +39,6 @@ interface Props {
   /** 完成 / 返回表单 */
   onBack: () => void
 }
-
-/** 来源矩阵：8 个源的固定顺序与短名（下拉里显示完整名，短名用于窄位兜底） */
-const PROVIDER_MATRIX: Array<{ id: DictProviderId; short: string }> = [
-  { id: 'youdao', short: '有道' },
-  { id: 'baidu', short: '百度' },
-  { id: 'eudic', short: '欧路' },
-  { id: 'bing', short: '必应' },
-  { id: 'iciba', short: '金山' },
-  { id: 'free_dict', short: 'Free' },
-  { id: 'wiktionary', short: '维基' },
-  { id: 'urban', short: 'Urban' },
-]
 
 /** 行内「已加入」状态按 来源 + 词 + 内容 记，换源/重查后仍能认出来（不按下标记） */
 function defKey(entry: DictEntry, definition: DictEntry['definitions'][number]): string {
@@ -161,7 +150,7 @@ export default function DictSearchPanel({
   // 词典源列表（会话级单例，失败按「无可用源」处理，不阻塞面板）
   const [providers, setProviders] = useState<DictProviderResp[] | null>(null)
   // 当前查看的来源；结果变化后若失效则回退第一条
-  const [source, setSource] = useState<DictProviderId | null>(null)
+  const [source, setSource] = useState<string | null>(null)
 
   /* —— 来源下拉：roving tabindex（当前项 tabIndex 0，其余 -1） —— */
   const [sourceOpen, setSourceOpen] = useState(false)
@@ -234,18 +223,9 @@ export default function DictSearchPanel({
     handleEntry(result)
   }, [result, handleEntry])
 
-  /** 下拉行：8 个源固定顺序；完整名优先取结果/源列表，没结果的源照样列出来（灰掉） */
+  /** 下拉行：后端注册表顺序（配置启用的插件）；没结果的源照样列出来（灰掉） */
   const sourceRows = useMemo(
-    () =>
-      PROVIDER_MATRIX.map(({ id, short }) => {
-        const hit = entries.find((item) => item.provider === id)
-        return {
-          id,
-          short,
-          label: hit?.label ?? providers?.find((p) => p.id === id)?.label ?? short,
-          available: Boolean(hit),
-        }
-      }),
+    () => buildSourceRows(providers ?? [], entries),
     [entries, providers],
   )
   const currentLabel = sourceRows.find((row) => row.id === current)?.label ?? null
@@ -377,7 +357,7 @@ export default function DictSearchPanel({
     optionRefs.current[clamped]?.focus()
   }
 
-  function chooseSource(id: DictProviderId) {
+  function chooseSource(id: string) {
     setSource(id)
     closeSourceMenu()
   }

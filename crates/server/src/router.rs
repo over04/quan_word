@@ -1,12 +1,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use anyhow::Result;
 use axum::Router;
+use dict_reqwest::transport::ReqwestTransport;
 use parking_lot::Mutex;
 use sea_orm::DatabaseConnection;
 use tower_http::compression::CompressionLayer;
 
 use crate::business::dict;
+use crate::business::dict::deps::DictDeps;
 use crate::business::dict::state::DictState;
 use crate::business::wordbooks;
 use crate::common::auth;
@@ -16,10 +19,22 @@ use crate::config::Config;
 
 /// 组装全部路由：聚合各业务域路由（域内递归聚合）+ SPA 静态托管（fallback）。
 /// `api_key` 为 config server.auth_key；非 None 时所有 /api 请求需携带密钥。
-/// 同时启动导入预览会话的后台清理任务（随进程结束而终止）。
-pub fn build(db: DatabaseConnection, api_key: Option<String>, config: Config) -> Router {
-    let dict_state = Arc::new(DictState::new(&config.dict));
+/// 同时启动导入预览会话清理与词典缓存/插件轮询后台任务。
+pub fn build(db: DatabaseConnection, api_key: Option<String>, config: Config) -> Result<Router> {
+    let transport = Arc::new(ReqwestTransport::new(config.dict.timeout_ms));
+    build_with(db, api_key, config, DictDeps { transport })
+}
+
+/// 与 `build` 相同，但注入词典传输层（测试 / 嵌入场景）。
+pub fn build_with(
+    db: DatabaseConnection,
+    api_key: Option<String>,
+    config: Config,
+    deps: DictDeps,
+) -> Result<Router> {
+    let dict_state = Arc::new(DictState::new(&config.dict, deps.transport)?);
     dict_state.spawn_cleaner();
+    dict_state.spawn_poller();
     let state = AppState {
         db: Arc::new(db),
         api_key: api_key.map(Arc::from),
@@ -34,7 +49,7 @@ pub fn build(db: DatabaseConnection, api_key: Option<String>, config: Config) ->
     let api = Router::new()
         .merge(wordbooks::router::router())
         .merge(dict::router::router());
-    Router::new()
+    Ok(Router::new()
         .merge(api.layer(axum::middleware::from_fn_with_state(
             state.clone(),
             auth::require_api_key,
@@ -47,5 +62,5 @@ pub fn build(db: DatabaseConnection, api_key: Option<String>, config: Config) ->
         ))
         // gzip 压缩：客户端 Accept-Encoding: gzip 时对文本/JSON/静态资源生效
         .layer(CompressionLayer::new())
-        .with_state(state)
+        .with_state(state))
 }

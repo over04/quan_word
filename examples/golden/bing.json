@@ -1,0 +1,43 @@
+{
+  "provider": "bing",
+  "label": "必应词典",
+  "word": "abandon",
+  "phonetic": "/əˈbændən/",
+  "definitions": [
+    {
+      "pos": "v.",
+      "meaning": "放弃"
+    },
+    {
+      "pos": "v.",
+      "meaning": "抛弃"
+    },
+    {
+      "pos": "v.",
+      "meaning": "废弃"
+    },
+    {
+      "pos": "v.",
+      "meaning": "遗弃"
+    },
+    {
+      "pos": "n.",
+      "meaning": "放肆"
+    },
+    {
+      "pos": "n.",
+      "meaning": "狂热"
+    },
+    {
+      "pos": "n.",
+      "meaning": "任性"
+    },
+    {
+      "pos": "n.",
+      "meaning": "恣意任性"
+    }
+  ],
+  "examples": [],
+  "audio_url": null,
+  "source_url": null
+}

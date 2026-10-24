@@ -1,0 +1,27 @@
+{
+  "provider": "baidu",
+  "label": "百度翻译",
+  "word": "abandon",
+  "phonetic": null,
+  "definitions": [
+    {
+      "pos": "vt.",
+      "meaning": "放弃，抛弃"
+    },
+    {
+      "pos": "vt.",
+      "meaning": "离弃，丢掷"
+    },
+    {
+      "pos": "vt.",
+      "meaning": "中止，放弃"
+    },
+    {
+      "pos": "n.",
+      "meaning": "放任，放纵"
+    }
+  ],
+  "examples": [],
+  "audio_url": null,
+  "source_url": "https://fanyi.baidu.com/#en/zh/abandon"
+}

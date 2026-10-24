@@ -1,15 +1,19 @@
+use dict_core::capability::Capability;
+use dict_core::entry::DictEntry;
+use dict_core::provider_id::ProviderId;
 use serde::Serialize;
 use ts_rs::TS;
 
-use crate::business::dict::entry::DictEntry;
-use crate::business::dict::provider_id::DictProviderId;
-
-/// 词典源信息（含是否在配置中启用）。
+/// 已安装词典插件信息（含是否在配置中启用）。
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "DictProviderResp.ts")]
 pub struct DictProviderResp {
-    pub id: DictProviderId,
+    pub id: ProviderId,
     pub label: String,
+    pub short_label: String,
+    pub description: Option<String>,
+    pub version: String,
+    pub capabilities: Vec<Capability>,
     pub enabled: bool,
 }
 
@@ -17,7 +21,7 @@ pub struct DictProviderResp {
 #[derive(Debug, Clone, Serialize, TS)]
 #[ts(export, export_to = "DictProviderErrorResp.ts")]
 pub struct DictProviderErrorResp {
-    pub provider: DictProviderId,
+    pub provider: ProviderId,
     pub label: String,
     pub message: String,
 }

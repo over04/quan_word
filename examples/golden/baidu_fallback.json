@@ -1,0 +1,15 @@
+{
+  "provider": "baidu",
+  "label": "百度翻译",
+  "word": "other",
+  "phonetic": null,
+  "definitions": [
+    {
+      "pos": "n.",
+      "meaning": "其它"
+    }
+  ],
+  "examples": [],
+  "audio_url": null,
+  "source_url": "https://fanyi.baidu.com/#en/zh/abandon"
+}

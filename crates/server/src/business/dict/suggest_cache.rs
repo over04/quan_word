@@ -3,7 +3,8 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
-use super::dto::suggestion::DictSuggestion;
+use dict_core::suggestion::DictSuggestion;
+
 use super::suggest_cache_entry::SuggestCacheEntry;
 
 /// 模糊建议缓存：按规范化单词缓存，TTL 与容量复用词典配置。
@@ -52,6 +53,11 @@ impl SuggestCache {
                 created_at: now,
             },
         );
+    }
+
+    /// 清空全部条目（插件重载后建议结果可能变化）。
+    pub fn clear(&self) {
+        self.inner.lock().clear();
     }
 
     pub fn cleanup(&self, now: Instant) {

@@ -1,0 +1,56 @@
+{
+  "manifest": {
+    "api_version": 1,
+    "id": "wiktionary",
+    "label": "维基词典",
+    "short_label": "维基",
+    "description": "维基词典 REST：英文释义与词源页地址",
+    "version": "1.0.0",
+    "engine": "recipe",
+    "capabilities": [
+      "lookup"
+    ],
+    "hosts": [
+      "en.wiktionary.org"
+    ],
+    "limits": {
+      "max_body_bytes": 1048576,
+      "max_definitions": 20,
+      "max_examples": 5
+    }
+  },
+  "recipe": {
+    "lookup": {
+      "request": {
+        "method": "get",
+        "url": "https://en.wiktionary.org/api/rest_v1/page/definition/{word}"
+      },
+      "word": {
+        "query": true
+      },
+      "definitions": [
+        {
+          "kind": "groups",
+          "from": {
+            "all": "en[*]"
+          },
+          "pos": {
+            "path": "partOfSpeech"
+          },
+          "pos_transform": [
+            "map_english_pos"
+          ],
+          "items": {
+            "all": "definitions[*].definition"
+          },
+          "transform": [
+            "clean_html"
+          ]
+        }
+      ],
+      "source_url": {
+        "template": "https://en.wiktionary.org/wiki/{word}"
+      }
+    }
+  }
+}

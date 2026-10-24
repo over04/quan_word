@@ -1,0 +1,39 @@
+{
+  "provider": "iciba",
+  "label": "金山词霸",
+  "word": "abandon",
+  "phonetic": null,
+  "definitions": [
+    {
+      "pos": "v.",
+      "meaning": "抛弃"
+    },
+    {
+      "pos": "v.",
+      "meaning": "舍弃"
+    },
+    {
+      "pos": "v.",
+      "meaning": "中止"
+    },
+    {
+      "pos": "v.",
+      "meaning": "放弃"
+    },
+    {
+      "pos": "v.",
+      "meaning": "放纵"
+    },
+    {
+      "pos": "n.",
+      "meaning": "放任"
+    },
+    {
+      "pos": "n.",
+      "meaning": "放纵"
+    }
+  ],
+  "examples": [],
+  "audio_url": null,
+  "source_url": null
+}

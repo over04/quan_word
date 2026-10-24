@@ -1,4 +1,4 @@
-use entity::definition::Definition;
+use lexicon::definition::Definition;
 use serde::Deserialize;
 
 /// 更新单词请求体（全量更新，与创建同字段）。

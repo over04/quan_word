@@ -1,0 +1,87 @@
+{
+  "manifest": {
+    "api_version": 1,
+    "id": "urban",
+    "label": "Urban Dictionary",
+    "short_label": "Urban",
+    "description": "Urban Dictionary：俚语释义与例句",
+    "version": "1.0.0",
+    "engine": "recipe",
+    "capabilities": [
+      "lookup"
+    ],
+    "hosts": [
+      "api.urbandictionary.com"
+    ],
+    "limits": {
+      "max_body_bytes": 1048576,
+      "max_definitions": 20,
+      "max_examples": 5
+    }
+  },
+  "recipe": {
+    "lookup": {
+      "request": {
+        "method": "get",
+        "url": "https://api.urbandictionary.com/v0/define?term={word}"
+      },
+      "vars": [
+        {
+          "name": "items",
+          "all": "list[*]",
+          "transform": [
+            {
+              "take": 3
+            }
+          ]
+        }
+      ],
+      "word": {
+        "query": true
+      },
+      "definitions": [
+        {
+          "kind": "items",
+          "from": {
+            "var": "items"
+          },
+          "meaning": {
+            "path": "definition"
+          },
+          "transform": [
+            {
+              "strip_chars": [
+                "[",
+                "]"
+              ]
+            },
+            "clean_html"
+          ]
+        }
+      ],
+      "examples": {
+        "from": {
+          "all": "list[*]"
+        },
+        "fields": {
+          "text": {
+            "path": "example"
+          }
+        },
+        "take": 2,
+        "transform": [
+          {
+            "strip_chars": [
+              "[",
+              "]"
+            ]
+          },
+          "clean_html"
+        ]
+      },
+      "source_url": {
+        "template": "https://www.urbandictionary.com/define.php?term={word}"
+      }
+    }
+  }
+}

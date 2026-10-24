@@ -1,0 +1,21 @@
+{
+  "ec": {
+    "word": [
+      {
+        "usphone": "əˈbændən",
+        "ukphone": "əˈbændən",
+        "trs": [
+          { "tr": [ { "l": { "i": ["vt. 放弃，抛弃；离弃", "n. 放任，放纵"] } } ] }
+        ]
+      }
+    ]
+  },
+  "blng_sents_part": {
+    "sentence-pair": [
+      { "sentence": "He <b>abandoned</b> his car.", "sentence-translation": "他丢弃了汽车。" },
+      { "sentence": "She abandoned hope.", "sentence-translation": "她放弃了希望。" },
+      { "sentence": "They abandoned the plan.", "sentence-translation": "他们放弃了计划。" },
+      { "sentence": "Too many sentences.", "sentence-translation": "超出三条。" }
+    ]
+  }
+}

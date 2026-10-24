@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { DictSuggestion, WordPresenceBook } from '../api'
 import { transitionNameFor } from '../viewTransition'
 import { ArrowRightIcon, RefreshIcon, SearchIcon } from './Icons'
@@ -29,11 +29,33 @@ export default function DictResultList({
   onRetry,
 }: Props) {
   const [visible, setVisible] = useState(PAGE)
+  const sentinelRef = useRef<HTMLDivElement>(null)
 
   // 换词就回到首屏条数（否则上一次展开的条数会带过来）
   useEffect(() => {
     setVisible(PAGE)
   }, [query])
+
+  // 滚动到列表底部自动续 6 条：没有按钮，也不打断阅读。
+  // rootMargin 提前 200px 触发，短列表在首屏内会连续补齐，直到 24 条全部出现。
+  useEffect(() => {
+    if (visible >= suggestions.length) return
+    const node = sentinelRef.current
+    if (!node) return
+    if (typeof IntersectionObserver === 'undefined') {
+      setVisible(suggestions.length)
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return
+        setVisible((current) => Math.min(current + PAGE, suggestions.length))
+      },
+      { rootMargin: '200px 0px' },
+    )
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [visible, suggestions.length])
 
   if (loading && suggestions.length === 0) {
     return (
@@ -42,7 +64,7 @@ export default function DictResultList({
         {[0, 1, 2, 3].map((index) => (
           <div
             key={index}
-            className="h-[120px] bg-white rounded-2xl border border-charcoal/5 shadow-sm px-4 py-3 space-y-2"
+            className="dict-result-skeleton px-4 py-3 space-y-2"
           >
             <div className="h-4 w-24 rounded bg-sand/60" />
             <div className="h-3 w-2/3 rounded bg-sand/40" />
@@ -56,7 +78,7 @@ export default function DictResultList({
 
   if (error) {
     return (
-      <div className="min-h-[116px] rounded-2xl border border-charcoal/10 bg-white/70 px-6 py-6 text-center flex flex-col items-center justify-center">
+      <div className="dict-result-state min-h-[116px] px-6 py-6 text-center flex flex-col items-center justify-center">
         <p className="text-sm text-red-600">{error}</p>
         <button
           type="button"
@@ -79,7 +101,7 @@ export default function DictResultList({
   if (suggestions.length === 0 || onlyEcho) {
     // 设计化空态：不写"没有查到"这类废话，直接给一个可执行入口
     return (
-      <div className="relative min-h-[116px] overflow-hidden rounded-2xl border border-dashed border-charcoal/15 bg-white/55 px-6 py-7 text-center flex items-center justify-center">
+      <div className="dict-result-state dict-result-state--empty relative min-h-[116px] overflow-hidden px-6 py-7 text-center flex items-center justify-center">
         <span aria-hidden="true" className="pointer-events-none absolute -right-2 -top-4 font-serif text-7xl text-clay/15">
           Aa
         </span>
@@ -113,7 +135,7 @@ export default function DictResultList({
               type="button"
               onClick={() => onSelect(suggestion.word)}
               aria-label={suggestion.word}
-              className="group w-full text-left bg-white rounded-2xl border border-charcoal/5 shadow-sm px-4 py-3 flex items-start gap-3 hover:shadow-md hover:-translate-y-0.5 hover:border-charcoal/10 active:translate-y-0 active:bg-sand/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/40 transition-all duration-200"
+              className="dict-result-card group active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-clay/40"
             >
               <span className="min-w-0 flex-1">
                 <span
@@ -150,16 +172,8 @@ export default function DictResultList({
         )
       })}
 
-      {/* 加载更多：后端一次给 24 条，这里每次多放 6 条（列表本身不再无限长） */}
-      {visible < suggestions.length && (
-        <button
-          type="button"
-          onClick={() => setVisible((n) => n + PAGE)}
-          className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 rounded-full border border-charcoal/15 text-xs font-medium text-charcoal/60 transition-all duration-200 hover:border-charcoal/30 hover:bg-white hover:text-charcoal"
-        >
-          加载更多（还有 {suggestions.length - visible} 条）
-        </button>
-      )}
+      {/* 滚动哨兵：进入视口自动续 6 条；列表本身最多 24 条，不会无限长 */}
+      {visible < suggestions.length && <div ref={sentinelRef} className="dict-result-sentinel" aria-hidden="true" />}
     </div>
   )
 }

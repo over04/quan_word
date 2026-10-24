@@ -11,15 +11,27 @@ pub enum DictError {
     InvalidWord,
     #[error("未知的词典源: {provider}")]
     UnknownProvider { provider: String },
+    #[error("插件不存在: {id}")]
+    PluginNotFound { id: String },
     #[error("词典源未启用: {provider}")]
     ProviderDisabled { provider: String },
     #[error("词典功能未启用")]
     DictDisabled,
+    #[error("没有可用的词典源")]
+    NoProviders,
+    #[error("插件包无效: {0}")]
+    InvalidPlugin(String),
+    #[error("插件文件操作失败: {0}")]
+    PluginIo(String),
 }
 
 impl From<DictError> for ApiError {
     fn from(e: DictError) -> Self {
-        ApiError::BadRequest(e.to_string())
+        match e {
+            DictError::PluginIo(message) => ApiError::Internal(message),
+            DictError::PluginNotFound { id } => ApiError::NotFound(format!("插件不存在: {id}")),
+            other => ApiError::BadRequest(other.to_string()),
+        }
     }
 }
 
@@ -44,6 +56,7 @@ mod tests {
                 provider: "urban".into(),
             },
             DictError::DictDisabled,
+            DictError::NoProviders,
         ];
         for err in cases {
             let msg = err.to_string();
@@ -52,6 +65,12 @@ mod tests {
             let resp = api.into_response();
             assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
         }
+    }
+
+    #[test]
+    fn maps_plugin_not_found_to_404() {
+        let api: ApiError = DictError::PluginNotFound { id: "foo".into() }.into();
+        assert_eq!(api.into_response().status(), StatusCode::NOT_FOUND);
     }
 
     #[test]

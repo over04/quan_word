@@ -9,7 +9,7 @@
 use std::io::Cursor;
 
 use calamine::{Data, DataType};
-use entity::definition::Definition;
+use lexicon::definition::Definition;
 
 use super::dto::import::ImportRowData;
 use super::error::WordError;

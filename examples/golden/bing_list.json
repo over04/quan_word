@@ -1,0 +1,19 @@
+{
+  "provider": "bing",
+  "label": "必应词典",
+  "word": "abandon",
+  "phonetic": null,
+  "definitions": [
+    {
+      "pos": "v.",
+      "meaning": "放弃"
+    },
+    {
+      "pos": "v.",
+      "meaning": "抛弃"
+    }
+  ],
+  "examples": [],
+  "audio_url": null,
+  "source_url": null
+}

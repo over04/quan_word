@@ -1,0 +1,119 @@
+{
+  "manifest": {
+    "api_version": 1,
+    "id": "youdao",
+    "label": "有道词典",
+    "short_label": "有道",
+    "description": "有道 jsonapi：中文释义、音标与双语例句",
+    "version": "1.0.0",
+    "engine": "recipe",
+    "capabilities": [
+      "lookup",
+      "suggest"
+    ],
+    "hosts": [
+      "dict.youdao.com"
+    ],
+    "limits": {
+      "max_body_bytes": 1048576,
+      "max_definitions": 20,
+      "max_examples": 5
+    }
+  },
+  "recipe": {
+    "lookup": {
+      "request": {
+        "method": "get",
+        "url": "https://dict.youdao.com/jsonapi?q={word}&le=en"
+      },
+      "vars": [
+        {
+          "name": "phonetic_us",
+          "path": "ec.word[0].usphone",
+          "transform": [
+            "normalize_phonetic"
+          ]
+        },
+        {
+          "name": "phonetic_uk",
+          "path": "ec.word[0].ukphone",
+          "transform": [
+            "normalize_phonetic"
+          ]
+        }
+      ],
+      "word": {
+        "query": true
+      },
+      "phonetic": {
+        "first": [
+          {
+            "var": "phonetic_us"
+          },
+          {
+            "var": "phonetic_uk"
+          }
+        ]
+      },
+      "definitions": [
+        {
+          "kind": "pos_text",
+          "from": {
+            "all": "ec.word[0].trs[*].tr[*].l.i[*]"
+          },
+          "separators": [
+            ";",
+            "；"
+          ],
+          "transform": [
+            "clean_html",
+            {
+              "join": "\n"
+            }
+          ]
+        }
+      ],
+      "examples": {
+        "from": {
+          "all": "blng_sents_part.sentence-pair[*]"
+        },
+        "fields": {
+          "text": {
+            "path": "sentence"
+          },
+          "translation": {
+            "path": "sentence-translation"
+          }
+        },
+        "take": 3,
+        "transform": [
+          "clean_html"
+        ]
+      }
+    },
+    "suggest": {
+      "request": {
+        "method": "get",
+        "url": "https://dict.youdao.com/suggest?num=24&ver=3.0&doctype=json&cache=false&le=en&q={word}"
+      },
+      "items": {
+        "from": {
+          "all": "data.entries[*]"
+        },
+        "fields": {
+          "word": {
+            "path": "entry"
+          },
+          "summary": {
+            "path": "explain"
+          }
+        },
+        "transform": [
+          "trim"
+        ]
+      },
+      "take": 24,
+      "dedup": "word_lowercase"
+    }
+  }
+}

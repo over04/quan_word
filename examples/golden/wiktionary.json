@@ -1,0 +1,19 @@
+{
+  "provider": "wiktionary",
+  "label": "维基词典",
+  "word": "abandon",
+  "phonetic": null,
+  "definitions": [
+    {
+      "pos": "v.",
+      "meaning": "To give up with the intent of never again claiming a right."
+    },
+    {
+      "pos": "n.",
+      "meaning": "A yielding to natural impulses & desires."
+    }
+  ],
+  "examples": [],
+  "audio_url": null,
+  "source_url": "https://en.wiktionary.org/wiki/abandon"
+}

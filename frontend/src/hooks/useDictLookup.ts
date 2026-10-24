@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { DictEntry, DictProviderErrorResp, DictProviderId } from '../api'
+import type { DictEntry, DictProviderErrorResp, ProviderId } from '../api'
 import { lookupDict, peekDict } from '../dictCache'
 
 /** 输入停止多久后发起查询（毫秒） */
@@ -26,7 +26,7 @@ const EMPTY: DictLookupState = { entries: [], errors: [], loading: false, error:
  */
 export function useDictLookup(
   word: string,
-  providers: DictProviderId[],
+  providers: ProviderId[],
   enabled: boolean,
   onResult?: (entries: DictEntry[]) => void,
   /** 防抖毫秒：输入框场景用默认 500；打开即查（详情页）传 0，不让骨架白等半秒 */

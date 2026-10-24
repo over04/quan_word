@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import type { Definition, DictEntry, DictProviderId, Wordbook } from '../api'
+import type { Definition, DictEntry, ProviderId, Wordbook } from '../api'
 import { getProviders } from '../dictCache'
 import { useDictLookup } from '../hooks/useDictLookup'
 import { useWordPresence } from '../hooks/useWordPresence'
@@ -67,8 +67,8 @@ export default function DictDetailPage({
   onClose,
   onRegisterBack,
 }: Props) {
-  const [providers, setProviders] = useState<DictProviderId[]>([])
-  const [picked, setPicked] = useState<DictProviderId | null>(null)
+  const [providers, setProviders] = useState<ProviderId[]>([])
+  const [picked, setPicked] = useState<ProviderId | null>(null)
   const [step, setStep] = useState<Step>('detail')
   const [pickedBook, setPickedBook] = useState<Wordbook | null>(null)
   const [selected, setSelected] = useState<Set<number>>(new Set([0]))

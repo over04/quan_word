@@ -16,8 +16,14 @@
 ```
 ├── crates/
 │   ├── server/             后端应用：business（URL 对齐的业务域）/ common / config / init
-│   ├── entity/             SeaORM 实体 + Definition（definitions JSON 列模型）
-│   └── migration/          数据库迁移
+│   ├── lexicon/            Definition / WordPos 共享模型（前后端契约）
+│   ├── dict-core/          可移植词典内核：插件注册表 + 配方引擎 + SearchTransport
+│   ├── dict-reqwest/       reqwest 传输层（超时 / 重定向白名单 / 响应上限）
+│   ├── entity/             SeaORM 实体
+│   ├── migration/          数据库迁移
+│   └── xtask/              仓库维护：示例插件校验
+├── examples/               示例插件、fixtures、goldens（不进运行时）
+├── plugins/                运行时插件目录（默认为空，从设置页导入）
 ├── frontend/               前端 SPA（src/generated/ 为 ts-rs 生成契约类型）
 ├── Dockerfile              多阶段构建：node → rust(musl 静态) → scratch（约 20MB）
 ├── docker-compose.yml      一键容器化部署（数据挂载 ./data/）
@@ -58,7 +64,8 @@ cd frontend && npm run dev     # 前端热更新 :5173，/api 代理到 :3000
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace         # 单元测试 + ts-rs 契约导出（刷新 frontend/src/generated/）
 cargo fmt --all --check
-cd frontend && npm run build   # tsc -b + vite build
+cargo run -p xtask -- validate-plugins   # 校验 examples/plugins 示例包
+cd frontend && npm run test && npm run build
 ```
 
 ### 配置
@@ -69,6 +76,21 @@ cd frontend && npm run build   # tsc -b + vite build
 
 共享边界类型由后端 ts-rs 导出到 `frontend/src/generated/`（`cargo test` 时刷新）。该目录为契约唯一事实来源，**勿手改**；修改 DTO 后重新 `cargo test` 并提交生成文件。
 
+### 词典插件
+
+词典抓取是**运行时装载的声明式配方插件**，不是编译进二进制的 Rust 模块：
+
+- 运行时只从 `plugins/*.json` 装载，仓库不内置任何源；8 个示例包在 `examples/plugins/`，仅用于测试与手动导入；
+- 设置页「词典源」只做列表、启停、导入、删除；目录默认 5 秒轮询，文件增删自动重载；
+- 导入 = multipart 上传 JSON，服务端重新校验后写 `plugins/<id>.json` 并立即生效；删除会移除对应文件；
+- 配方支持 JSON/HTML 提取、变量、变换、条件、释义策略与建议列表，安全上限（主机白名单、包体/响应大小、条数）由内核强制；
+- 完整格式、字段、调试与移动端嵌入见 [`docs/dev/plugins.md`](docs/dev/plugins.md)。
+
+```bash
+cargo run -p xtask -- validate-plugins            # 校验 examples/plugins
+cargo run -p xtask -- validate-plugins ./plugins  # 校验运行时目录
+```
+
 ## API 一览
 
 | 方法 | 路径 | 说明 |
@@ -78,8 +100,14 @@ cd frontend && npm run build   # tsc -b + vite build
 | GET/POST | `/api/wordbooks/{book_id}/words` | 分页浏览（order: id_asc/id_desc/spelling/random，random 需 seed）/ 添加单词 |
 | GET | `/api/wordbooks/{book_id}/words/query` | 列表模式：搜索 + 排序（sort/order）+ 分页 |
 | PUT/DELETE | `/api/wordbooks/{book_id}/words/{id}` | 更新 / 删除单词（校验归属该书） |
+| GET | `/api/dict/providers` | 已安装词典插件（启用状态、版本、能力） |
+| POST | `/api/dict/plugins` | 上传插件 JSON（multipart 字段 `file`），校验后立即装载 |
+| DELETE | `/api/dict/plugins/{id}` | 删除插件文件并立即卸载 |
+| PUT | `/api/dict/plugins/{id}/enabled` | 运行时启停插件（持久化到 `.state.json`） |
+| GET | `/api/dict/lookup` | 聚合抓词：`word` + 可选 `providers`（逗号分隔）+ `refresh=1` |
+| GET | `/api/dict/suggest` | 模糊建议（按 IP 限流） |
 
-分页参数：`page`（1 起）、`page_size`（默认 20，上限 100）。错误响应为 `{"error": "中文消息"}`。
+分页参数：`page`（1 起）、`page_size`（默认 20，上限 100）。错误响应为 `{"error": "中文消息"}`。配置 `server.auth_key` 后所有 `/api` 请求必须带 `Authorization: Bearer <key>` 或 `X-Api-Key`；未配置时整个 `/api` 不启用鉴权，属于部署特例。
 
 ## 部署
 

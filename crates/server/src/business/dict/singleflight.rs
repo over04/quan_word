@@ -42,12 +42,13 @@ impl DictSingleflight {
 mod tests {
     use std::sync::Arc;
 
+    use dict_core::provider_id::ProviderId;
+
     use super::DictSingleflight;
     use crate::business::dict::cache_key::DictKey;
-    use crate::business::dict::provider_id::DictProviderId;
 
     fn key(word: &str) -> DictKey {
-        DictKey::new(DictProviderId::Youdao, word)
+        DictKey::new(ProviderId::new("youdao").unwrap(), "1.0.0", word)
     }
 
     #[test]

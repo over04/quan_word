@@ -17,11 +17,18 @@ import:
   cache_ttl_secs: 1800      # 预览会话有效期（秒）：超时未导入自动清理
   cache_cap: 16             # 预览会话缓存上限（条）：超出整体清空
   cache_cleanup_secs: 60    # 后台清理任务扫描间隔（秒）
-# 词典抓词（可选，缺省用下列值）：/api/dict/providers、/api/dict/lookup
+# 词典抓词（可选，缺省用下列值）：/api/dict/providers、/api/dict/plugins、/api/dict/lookup
 dict:
   enabled: true
-  # 启用的词典源（顺序即聚合结果顺序）：youdao/baidu/eudic/bing/iciba/free_dict/wiktionary/urban
-  providers: [youdao, baidu, eudic, bing, iciba, free_dict, wiktionary, urban]
+  # 默认启用的词典源（顺序即聚合结果顺序）；空 = 全部已安装插件。
+  # 设置页的运行时启停会覆盖这里，并持久化到 plugins_dir/.state.json。
+  # 示例包在 examples/plugins/，从设置页「导入插件」手动装载。
+  providers: []
+  # 插件目录：运行时读取 *.json；目录为空也可启动，之后从设置页导入
+  plugins_dir: "./plugins"
+  # 目录轮询间隔（秒）：0 = 关闭自动发现；默认 5 秒，新增/删除插件文件后自动重载
+  plugins_poll_secs: 5
+  max_plugins: 32             # 插件数量上限（1..=256）
   timeout_ms: 6000            # 单次上游请求超时（毫秒，500..=30000）
   cache_ttl_secs: 604800      # 正向结果缓存（秒）
   negative_ttl_secs: 600      # 未收录结果缓存（秒）

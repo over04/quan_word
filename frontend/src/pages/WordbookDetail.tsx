@@ -10,7 +10,6 @@ import {
   type Word,
   type Wordbook,
 } from '../api'
-import { withViewTransition } from '../viewTransition'
 import PaperBookView from '../components/PaperBookView'
 import TagFilterPanel from '../components/TagFilterPanel'
 import { usePresence } from '../hooks/usePresence'
@@ -459,10 +458,12 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     }
   }
 
-  /** 纸质书 ↔ 列表切换：走统一的 View Transition（串行化 + vt-running），避免与页面切换互相 skip */
+  /** 纸质书 ↔ 列表切换：直接切模式，让 keyed 内容的入场动画真正播出来。
+   *  不能再走 withViewTransition：转场期间 html.vt-running 会把 animate-fade-in-up
+   *  快进到 0.001s，用户看到的反而是“没有动画”。 */
   function changeMode(m: 'paper' | 'list') {
     if (m === mode) return
-    void withViewTransition(() => setMode(m))
+    setMode(m)
   }
 
   function handleOpenCreate() {
@@ -547,18 +548,18 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
               <span className="hidden md:inline">添加单词</span>
             </button>
             <div className="flex w-full flex-wrap items-center gap-1.5 md:gap-2.5 md:ml-auto md:w-auto">
-              <div className="bg-sand/30 rounded-full p-1 flex shrink-0" role="tablist" aria-label="视图模式">
+              <div className="book-mode-switch" role="tablist" aria-label="视图模式">
+                <span
+                  aria-hidden="true"
+                  className={`book-mode-pill ${mode === 'list' ? 'is-list' : ''}`}
+                />
                 {(['paper', 'list'] as const).map((m) => (
                   <button
                     key={m}
                     role="tab"
                     aria-selected={mode === m}
                     onClick={() => changeMode(m)}
-                    className={`inline-flex items-center gap-1.5 min-h-11 px-3.5 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap active:scale-95 ${
-                      mode === m
-                        ? 'bg-charcoal text-ivory shadow-md'
-                        : 'text-charcoal/70 hover:text-charcoal'
-                    }`}
+                    className={`book-mode-btn ${mode === m ? 'is-active' : ''}`}
                   >
                     {m === 'paper' ? <PaperIcon className="w-4 h-4" /> : <ListIcon className="w-4 h-4" />}
                     {m === 'paper' ? '纸质书' : '列表'}
@@ -580,11 +581,15 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                   {hasFilter ? (totalSelected > 0 ? `标签(${totalSelected})` : '标签(无标签)') : '标签'}
                 </button>
               </div>
-              {/* 显示设置（仅纸质书模式，位置在模式切换旁） */}
-              {mode === 'paper' && (
+              {/* 显示设置（仅纸质书模式）：保留 DOM，用轨道宽度/透明度收起，切模式才有动画 */}
+              <span
+                className="book-nav-reveal book-nav-reveal--desktop"
+                data-open={mode === 'paper'}
+                aria-hidden={mode !== 'paper'}
+              >
                 <button
                   onClick={() => setSettingsOpen((o) => !o)}
-                  className={`hidden md:flex w-11 h-11 rounded-full items-center justify-center transition-all shrink-0 active:scale-95 ${
+                  className={`flex w-11 h-11 rounded-full items-center justify-center transition-all shrink-0 active:scale-95 ${
                     settingsOpen
                       ? 'bg-charcoal text-ivory'
                       : 'bg-sand/40 text-charcoal/70 hover:bg-sand/70'
@@ -594,10 +599,14 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                 >
                   <SettingsIcon className="w-4 h-4" />
                 </button>
-              )}
+              </span>
               {/* 隐藏/显示（纸质书模式）：桌面平铺；手机收进「更多」，避免横向溢出 */}
-              {mode === 'paper' && (
-                <div className="hidden md:flex items-center gap-2.5">
+              <div
+                className="book-nav-reveal book-nav-reveal--desktop"
+                data-open={mode === 'paper'}
+                aria-hidden={mode !== 'paper'}
+              >
+                <div className="flex items-center gap-2.5">
                 <div className="bg-sand/30 rounded-full p-1 flex shrink-0" role="group" aria-label="隐藏与显示">
                   <button onClick={handleHideAllWord} title="隐藏全部单词（含音标）" className={actBtn}>
                     隐藏单词
@@ -674,9 +683,13 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                   </button>
                 </span>
                 </div>
-              )}
-              {/* 手机端溢出菜单入口 */}
-              {mode === 'paper' && (
+              </div>
+              {/* 手机端溢出菜单入口：同样保留 DOM，切到列表时收成 0 宽 */}
+              <span
+                className="book-nav-reveal book-nav-reveal--mobile"
+                data-open={mode === 'paper'}
+                aria-hidden={mode !== 'paper'}
+              >
                 <button
                   type="button"
                   onClick={() => setMoreOpen((open) => !open)}
@@ -687,11 +700,11 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
                     moreOpen || hasWordOverrides || hasDefOverrides || shuffleSeed !== null
                       ? 'bg-charcoal text-ivory'
                       : 'bg-sand/40 text-charcoal/70 hover:bg-sand/70'
-                  } md:hidden`}
+                  }`}
                 >
                   <MoreIcon className="w-4 h-4" />
                 </button>
-              )}
+              </span>
             </div>
           </div>
           {/* 手机端溢出菜单：隐藏/显示/打乱（桌面端这些动作平铺在导航里） */}

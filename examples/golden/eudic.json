@@ -1,0 +1,44 @@
+{
+  "provider": "eudic",
+  "label": "欧路词典",
+  "word": "abandon",
+  "phonetic": "/əˈbændən/",
+  "definitions": [
+    {
+      "pos": "v.",
+      "meaning": "（不顾责任、义务等）离弃，遗弃，抛弃"
+    },
+    {
+      "pos": "v.",
+      "meaning": "（不得已而）舍弃，丢弃，离开"
+    },
+    {
+      "pos": "v.",
+      "meaning": "停止（支持或帮助）"
+    },
+    {
+      "pos": "v.",
+      "meaning": "放弃（信念）"
+    },
+    {
+      "pos": "n.",
+      "meaning": "【正式】放任"
+    },
+    {
+      "pos": "n.",
+      "meaning": "放纵"
+    }
+  ],
+  "examples": [
+    {
+      "text": "After careful deliberation, it was agreed to abandon the project.",
+      "translation": "经过慎重考虑，大家同意放弃这个项目。"
+    },
+    {
+      "text": "One morning we came upon an abandoned undernourished puppy.",
+      "translation": "一天早上我们发现了一只营养不良、被人抛弃的小狗。"
+    }
+  ],
+  "audio_url": null,
+  "source_url": null
+}

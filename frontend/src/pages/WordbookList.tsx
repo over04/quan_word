@@ -7,6 +7,7 @@ import DictDetailPage from '../components/DictDetailPage'
 import DictHome from '../components/DictHome'
 import HomeNav, { type HomeTab } from '../components/HomeNav'
 import { RefreshIcon } from '../components/Icons'
+import SettingsPage from './SettingsPage'
 import ToastHost from '../components/Toast'
 import { toast } from '../toast'
 import WordbookFormModal from '../components/WordbookFormModal'
@@ -182,7 +183,7 @@ export default function WordbookList({ onOpen }: Props) {
         <div className={`vt-home outline-none ${detailWord ? 'hidden' : ''}`} data-page-root="" tabIndex={-1}>
           {tab === 'dict' ? (
             <DictHome presenceVersion={presenceVersion} onOpenDetail={openDetail} />
-          ) : (
+          ) : tab === 'books' ? (
             <section className="max-w-7xl mx-auto px-4 md:px-8 animate-page-in" id="books">
               <Bookshelf
                 books={books}
@@ -199,6 +200,8 @@ export default function WordbookList({ onOpen }: Props) {
                 onDelete={setPendingDelete}
               />
             </section>
+          ) : (
+            <SettingsPage />
           )}
         </div>
       </main>

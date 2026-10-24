@@ -25,6 +25,8 @@ pub enum ApiError {
     TooManyRequests(String),
     #[error("数据库错误: {0}")]
     Db(#[from] DbErr),
+    #[error("内部错误: {0}")]
+    Internal(String),
 }
 
 impl IntoResponse for ApiError {
@@ -37,6 +39,10 @@ impl IntoResponse for ApiError {
             ApiError::Db(e) => {
                 // 内部细节只进日志，不暴露给客户端
                 tracing::error!("数据库错误: {e}");
+                (StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误".into())
+            }
+            ApiError::Internal(message) => {
+                tracing::error!("内部错误: {message}");
                 (StatusCode::INTERNAL_SERVER_ERROR, "服务器内部错误".into())
             }
         };

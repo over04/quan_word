@@ -1,7 +1,6 @@
+use dict_core::suggestion::DictSuggestion;
 use serde::Serialize;
 use ts_rs::TS;
-
-use super::suggestion::DictSuggestion;
 
 /// 模糊查词建议响应。
 #[derive(Debug, Clone, Serialize, TS)]

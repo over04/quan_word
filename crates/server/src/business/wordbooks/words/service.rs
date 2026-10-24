@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use chrono::Utc;
-use entity::definition::Definition;
 use entity::word;
+use lexicon::definition::Definition;
 use sea_orm::{DatabaseConnection, Set};
 
 use super::dto::batch::BatchDeleteWordsResp;
@@ -25,7 +25,6 @@ use super::file_type::ImportFileType;
 use super::import;
 use super::import_filter::ImportFilter;
 use super::order::WordOrder;
-use super::pos::WordPos;
 use super::repo::WordRepo;
 use super::sort::SortField;
 use super::sort_dir::SortDir;
@@ -33,6 +32,7 @@ use super::tag_group::TagGroupsParam;
 use super::tag_match::TagMatch;
 use crate::common::model::page::PageResp;
 use crate::common::state::{AppState, ImportCacheEntry, SHUFFLE_CACHE_CAP};
+use lexicon::word_pos::WordPos;
 
 /// 导入会话 token 序号（与纳秒时间戳拼合防碰撞；token 非安全边界，仅会话凭据）。
 static IMPORT_TOKEN_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -951,7 +951,7 @@ impl WordService {
 
 #[cfg(test)]
 mod tests {
-    use entity::definition::Definition;
+    use lexicon::definition::Definition;
 
     use super::WordService;
     use crate::business::wordbooks::words::error::WordError;

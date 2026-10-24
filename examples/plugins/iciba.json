@@ -1,0 +1,55 @@
+{
+  "manifest": {
+    "api_version": 1,
+    "id": "iciba",
+    "label": "金山词霸",
+    "short_label": "金山",
+    "description": "金山词霸建议接口：中文释义",
+    "version": "1.0.0",
+    "engine": "recipe",
+    "capabilities": [
+      "lookup"
+    ],
+    "hosts": [
+      "dict.iciba.com"
+    ],
+    "limits": {
+      "max_body_bytes": 1048576,
+      "max_definitions": 20,
+      "max_examples": 5
+    }
+  },
+  "recipe": {
+    "lookup": {
+      "request": {
+        "method": "get",
+        "url": "https://dict.iciba.com/dictionary/word/suggestion?word={word}&nums=1"
+      },
+      "vars": [
+        {
+          "name": "paraphrase",
+          "first": [
+            {
+              "all": "message[*].paraphrase"
+            }
+          ]
+        }
+      ],
+      "word": {
+        "query": true
+      },
+      "definitions": [
+        {
+          "kind": "pos_text",
+          "from": {
+            "var": "paraphrase"
+          },
+          "separators": [
+            ",",
+            "，"
+          ]
+        }
+      ]
+    }
+  }
+}

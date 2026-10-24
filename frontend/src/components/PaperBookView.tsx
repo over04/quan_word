@@ -315,35 +315,39 @@ export default function PaperBookView({
     // 筛选没匹配到 ≠ 这本书是空的：不能给「添加第一个单词」（书里明明有词，用户会被误导）
     if (filtered) {
       return (
-        <div className="max-w-md mx-auto text-center py-16 animate-fade-in-up">
-          <div className="mx-auto w-20 h-20 rounded-2xl bg-sand/40 flex items-center justify-center text-clay">
-            <FilterIcon className="w-9 h-9" />
+        <div className="paper-empty animate-fade-in-up">
+          <div className="paper-empty-inner">
+            <div className="mx-auto w-20 h-20 rounded-2xl bg-sand/40 flex items-center justify-center text-clay">
+              <FilterIcon className="w-9 h-9" />
+            </div>
+            <h2 className="font-serif text-3xl text-charcoal mt-7">没有符合筛选的单词</h2>
+            <p className="mt-3 text-charcoal/60 leading-relaxed">试试放宽条件，或清除筛选查看全部单词。</p>
+            <button
+              onClick={onClearFilter}
+              className="mt-8 min-h-11 border border-charcoal/25 text-charcoal px-8 rounded-full font-medium hover:bg-charcoal/5 transition-colors inline-flex items-center gap-2"
+            >
+              清除筛选
+            </button>
           </div>
-          <h2 className="font-serif text-3xl text-charcoal mt-7">没有符合筛选的单词</h2>
-          <p className="mt-3 text-charcoal/60 leading-relaxed">试试放宽条件，或清除筛选查看全部单词。</p>
-          <button
-            onClick={onClearFilter}
-            className="mt-8 min-h-11 border border-charcoal/25 text-charcoal px-8 rounded-full font-medium hover:bg-charcoal/5 transition-colors inline-flex items-center gap-2"
-          >
-            清除筛选
-          </button>
         </div>
       )
     }
     return (
-      <div className="max-w-md mx-auto text-center py-16 animate-fade-in-up">
-        <div className="mx-auto w-20 h-20 rounded-2xl bg-sand/40 flex items-center justify-center text-clay">
-          <BookIcon className="w-9 h-9" />
+      <div className="paper-empty animate-fade-in-up">
+        <div className="paper-empty-inner">
+          <div className="mx-auto w-20 h-20 rounded-2xl bg-sand/40 flex items-center justify-center text-clay">
+            <BookIcon className="w-9 h-9" />
+          </div>
+          <h2 className="font-serif text-3xl text-charcoal mt-7">这本书还没有单词</h2>
+          <p className="mt-3 text-charcoal/60 leading-relaxed">添加第一个单词，开始第一页。</p>
+          <button
+            onClick={onAddFirst}
+            className="mt-8 bg-charcoal text-ivory px-8 py-3.5 rounded-full font-medium hover:bg-charcoal/90 transition-all shadow-lg shadow-charcoal/10 inline-flex items-center gap-2"
+          >
+            <PlusIcon className="w-4 h-4" />
+            添加单词
+          </button>
         </div>
-        <h2 className="font-serif text-3xl text-charcoal mt-7">这本书还没有单词</h2>
-        <p className="mt-3 text-charcoal/60 leading-relaxed">添加第一个单词，开始第一页。</p>
-        <button
-          onClick={onAddFirst}
-          className="mt-8 bg-charcoal text-ivory px-8 py-3.5 rounded-full font-medium hover:bg-charcoal/90 transition-all shadow-lg shadow-charcoal/10 inline-flex items-center gap-2"
-        >
-          <PlusIcon className="w-4 h-4" />
-          添加单词
-        </button>
       </div>
     )
   }

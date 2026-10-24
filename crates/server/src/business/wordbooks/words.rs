@@ -6,7 +6,6 @@ mod file_type;
 mod import;
 mod import_filter;
 mod order;
-pub(crate) mod pos;
 mod repo;
 pub mod router;
 mod service;

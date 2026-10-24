@@ -1,4 +1,4 @@
-use entity::definition::Definition;
+use lexicon::definition::Definition;
 use serde::Deserialize;
 use ts_rs::TS;
 

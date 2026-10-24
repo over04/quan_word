@@ -69,6 +69,11 @@ impl DictCache {
             .retain(|_, entry| !self.expired(entry, now));
     }
 
+    /// 清空全部条目（插件重载后解析结果可能变化）。
+    pub fn clear(&self) {
+        self.inner.lock().clear();
+    }
+
     /// 当前条目数（含未清理的过期条目）。
     pub fn len(&self) -> usize {
         self.inner.lock().len()
@@ -93,14 +98,19 @@ mod tests {
     use std::time::{Duration, Instant};
 
     use super::DictCache;
+    use dict_core::entry::DictEntry;
+    use dict_core::provider_id::ProviderId;
+
     use crate::business::dict::cache_key::DictKey;
     use crate::business::dict::cached_lookup::CachedLookup;
-    use crate::business::dict::entry::DictEntry;
-    use crate::business::dict::provider_id::DictProviderId;
+
+    fn id() -> ProviderId {
+        ProviderId::new("youdao").unwrap()
+    }
 
     fn entry(word: &str) -> DictEntry {
         DictEntry {
-            provider: DictProviderId::Youdao,
+            provider: id(),
             label: "有道词典".into(),
             word: word.into(),
             phonetic: None,
@@ -112,7 +122,7 @@ mod tests {
     }
 
     fn key(word: &str) -> DictKey {
-        DictKey::new(DictProviderId::Youdao, word)
+        DictKey::new(id(), "1.0.0", word)
     }
 
     #[test]

@@ -1,0 +1,80 @@
+{
+  "manifest": {
+    "api_version": 1,
+    "id": "baidu",
+    "label": "百度翻译",
+    "short_label": "百度",
+    "description": "百度 sug 表单接口：中文释义",
+    "version": "1.0.0",
+    "engine": "recipe",
+    "capabilities": [
+      "lookup"
+    ],
+    "hosts": [
+      "fanyi.baidu.com"
+    ],
+    "limits": {
+      "max_body_bytes": 1048576,
+      "max_definitions": 20,
+      "max_examples": 5
+    }
+  },
+  "recipe": {
+    "lookup": {
+      "request": {
+        "method": "post_form",
+        "url": "https://fanyi.baidu.com/sug",
+        "headers": [
+          {
+            "name": "Referer",
+            "value": "https://fanyi.baidu.com/"
+          }
+        ],
+        "form": [
+          {
+            "name": "kw",
+            "value": "{word}"
+          }
+        ]
+      },
+      "vars": [
+        {
+          "name": "item",
+          "prefer": {
+            "from": {
+              "all": "data[*]"
+            },
+            "field": "k",
+            "equals": "query",
+            "ignore_case": true,
+            "fallback": "first"
+          }
+        }
+      ],
+      "word": {
+        "field": "k",
+        "from": {
+          "var": "item"
+        }
+      },
+      "definitions": [
+        {
+          "kind": "pos_text",
+          "from": {
+            "field": "v",
+            "from": {
+              "var": "item"
+            }
+          },
+          "separators": [
+            ";",
+            "；"
+          ]
+        }
+      ],
+      "source_url": {
+        "template": "https://fanyi.baidu.com/#en/zh/{word}"
+      }
+    }
+  }
+}

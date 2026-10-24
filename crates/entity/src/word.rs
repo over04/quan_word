@@ -10,7 +10,7 @@ pub struct Model {
     pub wordbook_id: i32,
     pub spelling: String,
     pub phonetic: Option<String>,
-    /// 释义数组 JSON（元素为 `crate::definition::Definition`）；边界处用 serde_json 转换
+    /// 释义数组 JSON（元素为 `lexicon::definition::Definition`）；边界处用 serde_json 转换
     #[sea_orm(column_type = "Json")]
     pub definitions: serde_json::Value,
     pub example: Option<String>,

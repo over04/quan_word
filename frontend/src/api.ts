@@ -10,8 +10,8 @@ import type { Definition } from './generated/Definition'
 import type { DictEntry } from './generated/DictEntry'
 import type { DictExample } from './generated/DictExample'
 import type { DictLookupResp } from './generated/DictLookupResp'
+import type { DictPluginDetailResp } from './generated/DictPluginDetailResp'
 import type { DictProviderErrorResp } from './generated/DictProviderErrorResp'
-import type { DictProviderId } from './generated/DictProviderId'
 import type { DictProviderResp } from './generated/DictProviderResp'
 import type { DictSuggestResp } from './generated/DictSuggestResp'
 import type { DictSuggestion } from './generated/DictSuggestion'
@@ -23,6 +23,8 @@ import type { ImportRowView } from './generated/ImportRowView'
 import type { ImportRowsReq } from './generated/ImportRowsReq'
 import type { ImportRowsResp } from './generated/ImportRowsResp'
 import type { Page } from './generated/Page'
+import type { ProviderId } from './generated/ProviderId'
+import type { SetPluginEnabledReq } from './generated/SetPluginEnabledReq'
 import type { Tag } from './generated/Tag'
 import type { UpdateTagReq } from './generated/UpdateTagReq'
 import type { UpdateWordTagsReq } from './generated/UpdateWordTagsReq'
@@ -43,8 +45,8 @@ export type {
   DictEntry,
   DictExample,
   DictLookupResp,
+  DictPluginDetailResp,
   DictProviderErrorResp,
-  DictProviderId,
   DictProviderResp,
   DictSuggestResp,
   DictSuggestion,
@@ -56,6 +58,8 @@ export type {
   ImportRowsReq,
   ImportRowsResp,
   Page,
+  ProviderId,
+  SetPluginEnabledReq,
   Tag,
   UpdateTagReq,
   UpdateWordTagsReq,
@@ -252,15 +256,35 @@ export const words = {
 
 /** 词典抓词：源列表 + 聚合查询（单源失败不影响整体，仍为 200） */
 export const dict = {
-  /** 全部词典源（含是否在配置中启用） */
+  /** 全部已安装插件（含运行时启用状态、能力与版本） */
   providers: () => api<DictProviderResp[]>('/api/dict/providers'),
+  /** 单个插件的详情蓝图（能力、注册字段、请求、变量与上限） */
+  pluginDetail: (id: ProviderId) =>
+    api<DictPluginDetailResp>(`/api/dict/plugins/${encodeURIComponent(id)}`),
+  /** 上传插件 JSON；成功后返回最新列表 */
+  importPlugin: (file: File) => {
+    const body = new FormData()
+    body.append('file', file)
+    return api<DictProviderResp[]>('/api/dict/plugins', { method: 'POST', body })
+  },
+  /** 删除插件文件；成功后返回最新列表 */
+  deletePlugin: (id: ProviderId) =>
+    api<DictProviderResp[]>(`/api/dict/plugins/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+  /** 运行时启停单个插件；成功后立即生效并持久化 */
+  setPluginEnabled: (id: ProviderId, enabled: boolean) =>
+    api<DictProviderResp>(`/api/dict/plugins/${encodeURIComponent(id)}/enabled`, {
+      method: 'PUT',
+      body: JSON.stringify({ enabled } satisfies SetPluginEnabledReq),
+    }),
   /**
    * 聚合查询：providers 缺省 = 后端全部启用源；refresh = 跳过后端缓存强制回源。
    * signal 透传给 fetch（组件卸载/参数变化时取消）。
    */
   lookup: (
     word: string,
-    providers?: DictProviderId[],
+    providers?: ProviderId[],
     opts?: { refresh?: boolean; signal?: AbortSignal },
   ) => {
     const parts = [`word=${encodeURIComponent(word)}`]

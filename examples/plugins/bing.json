@@ -1,0 +1,169 @@
+{
+  "manifest": {
+    "api_version": 1,
+    "id": "bing",
+    "label": "必应词典",
+    "short_label": "必应",
+    "description": "必应词典页：meta description 主释义与列表兜底",
+    "version": "1.0.0",
+    "engine": "recipe",
+    "capabilities": [
+      "lookup"
+    ],
+    "hosts": [
+      "cn.bing.com"
+    ],
+    "limits": {
+      "max_body_bytes": 1048576,
+      "max_definitions": 20,
+      "max_examples": 5
+    }
+  },
+  "recipe": {
+    "lookup": {
+      "request": {
+        "method": "get",
+        "url": "https://cn.bing.com/dict/search?q={word}&mkt=zh-cn",
+        "headers": [
+          {
+            "name": "Accept-Language",
+            "value": "zh-CN"
+          }
+        ]
+      },
+      "vars": [
+        {
+          "name": "description",
+          "selector": "meta[name=\"description\"]",
+          "attr": "content",
+          "transform": [
+            "collapse_ws"
+          ]
+        },
+        {
+          "name": "phonetic_us",
+          "var": "description",
+          "transform": [
+            {
+              "between": [
+                "美[",
+                "]"
+              ]
+            },
+            "normalize_phonetic"
+          ]
+        },
+        {
+          "name": "phonetic_uk",
+          "var": "description",
+          "transform": [
+            {
+              "between": [
+                "英[",
+                "]"
+              ]
+            },
+            "normalize_phonetic"
+          ]
+        },
+        {
+          "name": "main_body",
+          "var": "description",
+          "transform": [
+            {
+              "before": "网络释义"
+            },
+            {
+              "after_last": "]"
+            },
+            {
+              "trim_chars": "，,：:；; "
+            }
+          ]
+        },
+        {
+          "name": "network_body",
+          "var": "description",
+          "transform": [
+            {
+              "after": "网络释义"
+            },
+            {
+              "after_last": "]"
+            },
+            {
+              "trim_chars": "，,：:；; "
+            }
+          ]
+        }
+      ],
+      "word": {
+        "query": true
+      },
+      "phonetic": {
+        "first": [
+          {
+            "var": "phonetic_us"
+          },
+          {
+            "var": "phonetic_uk"
+          }
+        ]
+      },
+      "definitions": [
+        {
+          "kind": "pos_text",
+          "from": {
+            "var": "main_body"
+          },
+          "separators": [
+            "；",
+            ";"
+          ],
+          "when": {
+            "contains": {
+              "var": "description",
+              "value": "的释义"
+            }
+          }
+        },
+        {
+          "kind": "plain_text",
+          "from": {
+            "var": "network_body"
+          },
+          "separators": [
+            "；",
+            ";"
+          ],
+          "when": {
+            "contains": {
+              "var": "description",
+              "value": "的释义"
+            }
+          }
+        },
+        {
+          "kind": "items",
+          "from": {
+            "selector": "li",
+            "all": true
+          },
+          "pos": {
+            "selector": "span.pos"
+          },
+          "pos_transform": [
+            "canonical_pos"
+          ],
+          "meaning": {
+            "selector": "span.def"
+          },
+          "split": [
+            ";",
+            "；"
+          ]
+        }
+      ]
+    }
+  }
+}

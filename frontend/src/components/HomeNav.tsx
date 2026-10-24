@@ -1,6 +1,6 @@
 import { BookIcon, PlusIcon } from './Icons'
 
-export type HomeTab = 'dict' | 'books'
+export type HomeTab = 'dict' | 'books' | 'settings'
 
 interface Props {
   tab: HomeTab
@@ -11,10 +11,11 @@ interface Props {
 const TABS: Array<{ id: HomeTab; label: string }> = [
   { id: 'dict', label: '查词' },
   { id: 'books', label: '单词书' },
+  { id: 'settings', label: '设置' },
 ]
 
 /**
- * 主页一级导航：品牌 / 查词与单词书分区 / 新建。
+ * 主页一级导航：品牌 / 查词、单词书与设置分区 / 新建。
  *
  * 动效与性能：
  * - 入场只用 transform + opacity（animate-nav-in），动画结束后不留合成层；
@@ -84,13 +85,15 @@ export default function HomeNav({ tab, onTab, onCreate }: Props) {
             </div>
           </div>
 
-          <button
-            onClick={onCreate}
-            className="home-nav-cta ml-auto inline-flex items-center gap-2 bg-charcoal text-ivory px-4 md:px-5 rounded-full text-sm font-medium hover:bg-charcoal/90 shadow-lg shadow-charcoal/10 whitespace-nowrap shrink-0"
-          >
-            <PlusIcon className="w-4 h-4" />
-            新建单词书
-          </button>
+          {tab !== 'settings' && (
+            <button
+              onClick={onCreate}
+              className="home-nav-cta ml-auto inline-flex items-center gap-2 bg-charcoal text-ivory px-4 md:px-5 rounded-full text-sm font-medium hover:bg-charcoal/90 shadow-lg shadow-charcoal/10 whitespace-nowrap shrink-0"
+            >
+              <PlusIcon className="w-4 h-4" />
+              新建单词书
+            </button>
+          )}
         </div>
       </div>
     </nav>

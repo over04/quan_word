@@ -120,6 +120,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "arc-swap"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "380962b3d93b99642e50b9febf72c071e97e8b32d86eae9cf4ef582bb960ae6e"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "arrayvec"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -928,6 +937,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "dict-core"
+version = "0.1.0"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "lexicon",
+ "percent-encoding",
+ "scraper",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "ts-rs",
+ "url",
+]
+
+[[package]]
+name = "dict-reqwest"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "dict-core",
+ "reqwest",
+ "tracing",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1010,10 +1047,10 @@ name = "entity"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "lexicon",
  "sea-orm",
  "serde",
  "serde_json",
- "ts-rs",
 ]
 
 [[package]]
@@ -1713,6 +1750,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "409851a618475d2d5796377cad353802345cba92c867d9fbcde9cf4eac4e14df"
 dependencies = [
  "lexical-util",
+]
+
+[[package]]
+name = "lexicon"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "strum 0.27.2",
+ "ts-rs",
 ]
 
 [[package]]
@@ -2939,16 +2985,16 @@ dependencies = [
  "calamine",
  "chrono",
  "csv",
+ "dict-core",
+ "dict-reqwest",
  "encoding_rs",
  "entity",
+ "lexicon",
  "migration",
  "mime_guess",
  "parking_lot",
- "percent-encoding",
- "reqwest",
  "rust-embed",
  "rust_xlsxwriter",
- "scraper",
  "sea-orm",
  "sea-orm-migration",
  "serde",
@@ -4233,6 +4279,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "05f360fc0b24296329c78fda852a1e9ae82de9cf7b27dae4b7f62f118f77b9ed"
 dependencies = [
  "tap",
+]
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
+dependencies = [
+ "dict-core",
 ]
 
 [[package]]

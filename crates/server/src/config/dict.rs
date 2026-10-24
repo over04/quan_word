@@ -1,17 +1,26 @@
-use crate::business::dict::provider_id::DictProviderId;
+use dict_core::provider_id::ProviderId;
 
-/// 词典抓词配置：源开关、超时、缓存/熔断参数与输入长度上限。
+/// 词典抓词配置：插件目录、源开关、超时、缓存/熔断参数与输入长度上限。
 ///
 /// 缺省值面向公网抓词：6 秒超时、7 天正向缓存、10 分钟负缓存、8 路并发、
-/// 连续 3 次失败熔断 60 秒。
+/// 连续 3 次失败熔断 60 秒；`providers: []` 表示启用全部已安装插件。
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct DictConfig {
     /// 是否启用词典抓词接口（关闭后 /api/dict/lookup 返回 400）
     #[serde(default = "default_enabled")]
     pub enabled: bool,
-    /// 启用的词典源（同时也是聚合结果的顺序）
-    #[serde(default = "default_providers")]
-    pub providers: Vec<DictProviderId>,
+    /// 启用的词典源 id（空 = 全部已安装插件；非空时同时决定聚合顺序）
+    #[serde(default)]
+    pub providers: Vec<String>,
+    /// 插件目录（不存在或为空时启动后无可用源，可从设置页导入）
+    #[serde(default = "default_plugins_dir")]
+    pub plugins_dir: String,
+    /// 插件目录轮询间隔（秒）；0 = 不轮询，仅启动时装载
+    #[serde(default = "default_plugins_poll_secs")]
+    pub plugins_poll_secs: u64,
+    /// 插件数量上限
+    #[serde(default = "default_max_plugins")]
+    pub max_plugins: usize,
     /// 单次上游请求超时（毫秒）
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
@@ -45,8 +54,16 @@ const fn default_enabled() -> bool {
     true
 }
 
-fn default_providers() -> Vec<DictProviderId> {
-    DictProviderId::ALL.to_vec()
+fn default_plugins_dir() -> String {
+    "./plugins".to_string()
+}
+
+const fn default_plugins_poll_secs() -> u64 {
+    5
+}
+
+const fn default_max_plugins() -> usize {
+    32
 }
 
 const fn default_timeout_ms() -> u64 {
@@ -89,7 +106,10 @@ impl Default for DictConfig {
     fn default() -> Self {
         Self {
             enabled: default_enabled(),
-            providers: default_providers(),
+            providers: Vec::new(),
+            plugins_dir: default_plugins_dir(),
+            plugins_poll_secs: default_plugins_poll_secs(),
+            max_plugins: default_max_plugins(),
             timeout_ms: default_timeout_ms(),
             cache_ttl_secs: default_cache_ttl_secs(),
             negative_ttl_secs: default_negative_ttl_secs(),
@@ -104,12 +124,20 @@ impl Default for DictConfig {
 }
 
 impl DictConfig {
-    /// 启动期校验：数值合法性与源列表非空（消息为中文，直接进启动错误）。
+    /// 启动期校验：数值合法性、源 id 格式与插件目录（消息为中文，直接进启动错误）。
     pub fn validate(&self) -> Result<(), String> {
-        if self.enabled && self.providers.is_empty() {
-            return Err(
-                "dict.providers 不能为空（dict.enabled 为 true 时至少启用一个词典源）".into(),
-            );
+        for raw in &self.providers {
+            ProviderId::new(raw.clone())
+                .map_err(|error| format!("dict.providers 含非法源 id: {error}"))?;
+        }
+        if self.plugins_dir.trim().is_empty() {
+            return Err("dict.plugins_dir 不能为空".into());
+        }
+        if !(1..=256).contains(&self.max_plugins) {
+            return Err(format!(
+                "dict.max_plugins 必须在 1..=256 之间（当前 {}）",
+                self.max_plugins
+            ));
         }
         if !(500..=30_000).contains(&self.timeout_ms) {
             return Err(format!(
@@ -150,7 +178,10 @@ mod tests {
     fn defaults_match_documented_values() {
         let cfg = DictConfig::default();
         assert!(cfg.enabled);
-        assert_eq!(cfg.providers.len(), 8);
+        assert!(cfg.providers.is_empty(), "缺省启用全部已安装插件");
+        assert_eq!(cfg.plugins_dir, "./plugins");
+        assert_eq!(cfg.plugins_poll_secs, 5);
+        assert_eq!(cfg.max_plugins, 32);
         assert_eq!(cfg.timeout_ms, 6000);
         assert_eq!(cfg.cache_ttl_secs, 604_800);
         assert_eq!(cfg.negative_ttl_secs, 600);
@@ -206,6 +237,14 @@ mod tests {
                 breaker_cooldown_secs: 0,
                 ..DictConfig::default()
             },
+            DictConfig {
+                max_plugins: 0,
+                ..DictConfig::default()
+            },
+            DictConfig {
+                plugins_dir: "  ".into(),
+                ..DictConfig::default()
+            },
         ];
         for cfg in invalid {
             assert!(cfg.validate().is_err(), "非法数值应被拒绝: {cfg:?}");
@@ -213,17 +252,23 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_providers_when_enabled() {
+    fn accepts_empty_providers_and_validates_ids() {
         let cfg = DictConfig {
             providers: Vec::new(),
             ..DictConfig::default()
         };
-        assert!(cfg.validate().is_err());
-        let disabled = DictConfig {
-            enabled: false,
-            providers: Vec::new(),
+        assert!(cfg.validate().is_ok(), "空源列表表示全部已安装插件");
+
+        let valid = DictConfig {
+            providers: vec!["youdao".into(), "free_dict".into()],
             ..DictConfig::default()
         };
-        assert!(disabled.validate().is_ok(), "关闭词典时不要求源列表非空");
+        assert!(valid.validate().is_ok());
+
+        let invalid = DictConfig {
+            providers: vec!["Youdao".into()],
+            ..DictConfig::default()
+        };
+        assert!(invalid.validate().is_err());
     }
 }

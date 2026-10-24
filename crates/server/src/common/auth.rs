@@ -46,6 +46,10 @@ mod tests {
     use sea_orm::Database;
     use tower::ServiceExt;
 
+    use dict_core::engine_limits::EngineLimits;
+    use dict_core::search_engine::SearchEngine;
+    use dict_reqwest::transport::ReqwestTransport;
+
     use super::require_api_key;
     use crate::business::dict::state::DictState;
     use crate::common::state::AppState;
@@ -59,7 +63,16 @@ mod tests {
             wordbooks_cache: Arc::new(parking_lot::Mutex::new(None)),
             shuffle_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             import_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-            dict: Arc::new(DictState::new(&config.dict)),
+            dict: Arc::new(
+                DictState::from_engine(
+                    &config.dict,
+                    Arc::new(SearchEngine::new(
+                        Arc::new(ReqwestTransport::new(1000)),
+                        EngineLimits::default(),
+                    )),
+                )
+                .unwrap(),
+            ),
             config,
         }
     }

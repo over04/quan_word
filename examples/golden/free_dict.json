@@ -1,0 +1,28 @@
+{
+  "provider": "free_dict",
+  "label": "Free Dictionary",
+  "word": "abandon",
+  "phonetic": "/əˈbændən/",
+  "definitions": [
+    {
+      "pos": "v.",
+      "meaning": "To give up with the intent of never again claiming a right or interest in."
+    },
+    {
+      "pos": "v.",
+      "meaning": "To cast aside."
+    },
+    {
+      "pos": "n.",
+      "meaning": "A yielding to natural impulses."
+    }
+  ],
+  "examples": [
+    {
+      "text": "He abandoned his car.",
+      "translation": null
+    }
+  ],
+  "audio_url": "https://api.dictionaryapi.dev/media/abandon-us.mp3",
+  "source_url": null
+}

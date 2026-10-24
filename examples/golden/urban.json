@@ -1,0 +1,32 @@
+{
+  "provider": "urban",
+  "label": "Urban Dictionary",
+  "word": "abandon",
+  "phonetic": null,
+  "definitions": [
+    {
+      "pos": "",
+      "meaning": "To leave someone or something behind. Usually permanent."
+    },
+    {
+      "pos": "",
+      "meaning": "Total freedom."
+    },
+    {
+      "pos": "",
+      "meaning": "Third definition."
+    }
+  ],
+  "examples": [
+    {
+      "text": "I abandoned my car.",
+      "translation": null
+    },
+    {
+      "text": "Dance like nobody's watching.",
+      "translation": null
+    }
+  ],
+  "audio_url": null,
+  "source_url": "https://www.urbandictionary.com/define.php?term=abandon"
+}

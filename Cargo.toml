@@ -1,10 +1,19 @@
 [workspace]
-members = ["crates/entity", "crates/migration", "crates/server"]
+members = [
+    "crates/dict-core",
+    "crates/dict-reqwest",
+    "crates/entity",
+    "crates/lexicon",
+    "crates/migration",
+    "crates/server",
+    "crates/xtask",
+]
 resolver = "2"
 
 [workspace.package]
 edition = "2021"
 license = "MIT"
+rust-version = "1.96"
 
 [workspace.dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -14,3 +23,11 @@ sea-orm = { version = "2", features = ["macros"] }
 sea-orm-migration = "2"
 strum = { version = "0.27", features = ["derive"] }
 ts-rs = { version = "12", features = ["no-serde-warnings"] }
+thiserror = "2"
+async-trait = "0.1"
+percent-encoding = "2"
+scraper = "0.29.0"
+tracing = "0.1"
+url = "2"
+arc-swap = "1"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "charset"] }

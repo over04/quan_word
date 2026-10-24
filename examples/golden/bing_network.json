@@ -1,0 +1,19 @@
+{
+  "provider": "bing",
+  "label": "必应词典",
+  "word": "abandon",
+  "phonetic": "/əˈbændən/",
+  "definitions": [
+    {
+      "pos": "",
+      "meaning": "丢弃"
+    },
+    {
+      "pos": "",
+      "meaning": "舍弃"
+    }
+  ],
+  "examples": [],
+  "audio_url": null,
+  "source_url": null
+}

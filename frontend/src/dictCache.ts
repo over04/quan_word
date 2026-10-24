@@ -2,8 +2,8 @@ import {
   dict,
   type DictEntry,
   type DictLookupResp,
-  type DictProviderId,
   type DictProviderResp,
+  type ProviderId,
 } from './api'
 import type { WordDraft } from './wordDraft'
 
@@ -24,6 +24,16 @@ const inflight = new Map<string, Promise<DictLookupResp>>()
 /** 词典源列表：单例 Promise，整个页面生命周期只请求一次；失败后清空以便重试 */
 let providersPromise: Promise<DictProviderResp[]> | null = null
 
+/**
+ * 插件重载后清空会话缓存：后端已清缓存/熔断，前端继续用旧释义会像「重载没生效」。
+ * 同时丢掉源列表单例，下一次 getProviders 重新拉取。
+ */
+export function clearDictCache() {
+  cache.clear()
+  inflight.clear()
+  providersPromise = null
+}
+
 /** 词典源列表（单例）。 */
 export function getProviders(): Promise<DictProviderResp[]> {
   if (!providersPromise) {
@@ -36,7 +46,7 @@ export function getProviders(): Promise<DictProviderResp[]> {
 }
 
 /** 缓存 key：词形 + 源集合（排序后拼接，源顺序不影响命中） */
-function cacheKey(word: string, providers: DictProviderId[]): string {
+function cacheKey(word: string, providers: ProviderId[]): string {
   return `${word.trim().toLowerCase()}|${[...providers].sort().join(',')}`
 }
 
@@ -65,7 +75,7 @@ function writeCache(key: string, data: DictLookupResp) {
 }
 
 /** 同步读缓存（未命中/已过期返回 null）：供 hook 判断能否不闪 loading */
-export function peekDict(word: string, providers: DictProviderId[]): DictLookupResp | null {
+export function peekDict(word: string, providers: ProviderId[]): DictLookupResp | null {
   return readCache(cacheKey(word, providers))
 }
 
@@ -104,7 +114,7 @@ function withSignal<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
  */
 export function lookupDict(
   word: string,
-  providers: DictProviderId[],
+  providers: ProviderId[],
   opts?: { refresh?: boolean; signal?: AbortSignal },
 ): Promise<DictLookupResp> {
   const key = cacheKey(word, providers)

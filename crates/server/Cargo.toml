@@ -5,7 +5,10 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+dict-core = { path = "../dict-core" }
+dict-reqwest = { path = "../dict-reqwest" }
 entity = { path = "../entity" }
+lexicon = { path = "../lexicon" }
 migration = { path = "../migration" }
 sea-orm = { workspace = true, features = ["sqlx-sqlite", "sqlx-postgres", "runtime-tokio-rustls"] }
 sea-orm-migration = { workspace = true }
@@ -16,9 +19,9 @@ serde_json = { workspace = true }
 serde_yml = "0.0.12"
 chrono = { workspace = true }
 anyhow = "1"
-thiserror = "2"
+thiserror = { workspace = true }
 strum = { workspace = true }
-tracing = "0.1"
+tracing = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rust-embed = "8"
 mime_guess = "2"
@@ -30,10 +33,7 @@ csv = "1.4.0"
 calamine = "0.36.1"
 encoding_rs = "0.8.35"
 rust_xlsxwriter = "0.97.0"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "charset"] }
-async-trait = "0.1"
-percent-encoding = "2"
-scraper = "0.29.0"
 
 [dev-dependencies]
+async-trait = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
