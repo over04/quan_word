@@ -84,7 +84,7 @@ describe('DictSettings', () => {
     expect(screen.queryByText('外部')).toBeNull()
     expect(screen.queryByText('已安装')).toBeNull()
     expect(screen.queryByText('重新加载')).toBeNull()
-    expect(screen.queryByText('./plugins')).toBeNull()
+    expect(screen.queryByText('./data/plugins')).toBeNull()
   })
 
   it('点击源打开可视化详情并可返回', async () => {

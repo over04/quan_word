@@ -1,8 +1,8 @@
 # 词典插件开发
 
-词典抓取不再编译进服务端：每个源是一个 **声明式配方（recipe）插件**，运行时只从 `plugins/*.json` 装载，仓库不内置任何源。新增/修改源只需要写 JSON，不改 Rust、不重新编译；同一套内核也能在 iOS / Android / WASI 上运行。
+词典抓取不再编译进服务端：每个源是一个 **声明式配方（recipe）插件**，运行时只从 `data/plugins/*.json` 装载，仓库不内置任何源。新增/修改源只需要写 JSON，不改 Rust、不重新编译；同一套内核也能在 iOS / Android / WASI 上运行。
 
-`examples/plugins/` 存放 8 个示例包，仅用于测试与手动导入；服务启动时 `plugins/` 为空是合法状态。
+`examples/plugins/` 存放 8 个示例包，仅用于测试与手动导入；服务启动时 `data/plugins/` 为空是合法状态。
 
 ## 分层
 
@@ -27,7 +27,7 @@ pub trait SearchTransport {
 
 ## 插件包格式
 
-`plugins/<id>.json`：
+`data/plugins/<id>.json`：
 
 ```json
 {
@@ -206,19 +206,19 @@ pub trait SearchTransport {
 
 ## 装载
 
-1. 只读 `dict.plugins_dir`（默认 `./plugins`）下的 `*.json`，按文件名排序；仓库不内置任何源。
+1. 只读 `dict.plugins_dir`（默认 `./data/plugins`）下的 `*.json`，按文件名排序；仓库不内置任何源。
 2. 目录不存在或为空时服务照常启动，词典接口返回“没有可用的词典源”；从设置页导入后立即可用。
 3. 两个包同 id：两个都拒绝（不会“后写覆盖先写”），拒绝原因进启动日志。
 4. 超过 `dict.max_plugins` 的包被拒绝。
 5. 解析失败/主机越界/能力与配方不一致的包只影响自己，其它包照常装载。
 
-`dict.providers` 为空表示启用全部已安装插件；非空时按该数组顺序启用并聚合，未知 id 启动报错。`providers` 只影响“启用/顺序”，不阻止安装；设置页的运行时启停覆盖它并持久化到 `plugins/.state.json`。
+`dict.providers` 为空表示启用全部已安装插件；非空时按该数组顺序启用并聚合，未知 id 启动报错。`providers` 只影响“启用/顺序”，不阻止安装；设置页的运行时启停覆盖它并持久化到 `data/plugins/.state.json`。
 
 ## 自动发现、导入与删除
 
 - 启动时装载一次。
 - `dict.plugins_poll_secs > 0`（默认 5 秒）时后台扫描目录；文件名、长度、mtime 都没变就不重载，避免无谓清缓存。
-- `POST /api/dict/plugins`：multipart 字段 `file`，上传 JSON 包；服务端重新校验，写为 `plugins/<id>.json`，删除同 id 的旧外部文件，然后立即重载。请求体上限 300 KiB。
+- `POST /api/dict/plugins`：multipart 字段 `file`，上传 JSON 包；服务端重新校验，写为 `data/plugins/<id>.json`，删除同 id 的旧外部文件，然后立即重载。请求体上限 300 KiB。
 - `DELETE /api/dict/plugins/{id}`：删除该 id 的插件文件并立即重载。
 - `PUT /api/dict/plugins/{id}/enabled`：运行时启停，写 `.state.json`，不移动文件。
 - `GET /api/dict/plugins/{id}`：只读详情蓝图，返回 manifest 能力/hosts、lookup/suggest 请求、注册字段、释义策略、变量、插件上限与引擎硬上限；不返回原始 JSON。未知 id 返回 404。
@@ -228,7 +228,7 @@ pub trait SearchTransport {
 
 ## 新增一个源
 
-1. 在 `examples/plugins/` 新建 `<id>.json`（示例/测试用），或直接在设置页导入到运行时 `plugins/`。
+1. 在 `examples/plugins/` 新建 `<id>.json`（示例/测试用），或直接在设置页导入到运行时 `data/plugins/`。
 2. 在 `examples/fixtures/` 放一份真实响应，在 `crates/dict-core/tests/examples.rs` 加回归断言（或复用现有 golden）。
 3. 跑校验：
 

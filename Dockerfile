@@ -30,7 +30,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     cargo build --release && \
     cp /app/target/release/server /usr/local/bin/server
 
-# 数据目录归属运行时 uid 1000（named volume 首次挂载会继承所有权）
+# 数据目录归属运行时 uid 1000（named volume 首次挂载会继承所有权）。
+# 插件目录放在 data 下（./data/plugins），跟数据库共用同一个可写挂载，
+# 不再单独挂 /app/plugins，避免 uid 1000 对 /app 无写权限导致导入 500。
 RUN mkdir -p /app/data && chown -R 1000:1000 /app/data
 
 # ---------- 阶段 3：scratch 运行镜像 ----------

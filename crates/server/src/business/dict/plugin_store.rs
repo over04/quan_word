@@ -18,7 +18,7 @@ pub struct PluginStore {
 impl PluginStore {
     pub fn new(config: &DictConfig) -> Self {
         Self {
-            dir: PathBuf::from(&config.plugins_dir),
+            dir: config.plugins_dir.clone(),
         }
     }
 

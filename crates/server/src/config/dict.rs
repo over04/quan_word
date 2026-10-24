@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use dict_core::provider_id::ProviderId;
 
 /// 词典抓词配置：插件目录、源开关、超时、缓存/熔断参数与输入长度上限。
@@ -14,7 +16,7 @@ pub struct DictConfig {
     pub providers: Vec<String>,
     /// 插件目录（不存在或为空时启动后无可用源，可从设置页导入）
     #[serde(default = "default_plugins_dir")]
-    pub plugins_dir: String,
+    pub plugins_dir: PathBuf,
     /// 插件目录轮询间隔（秒）；0 = 不轮询，仅启动时装载
     #[serde(default = "default_plugins_poll_secs")]
     pub plugins_poll_secs: u64,
@@ -54,8 +56,8 @@ const fn default_enabled() -> bool {
     true
 }
 
-fn default_plugins_dir() -> String {
-    "./plugins".to_string()
+fn default_plugins_dir() -> PathBuf {
+    PathBuf::from("./data/plugins")
 }
 
 const fn default_plugins_poll_secs() -> u64 {
@@ -130,7 +132,9 @@ impl DictConfig {
             ProviderId::new(raw.clone())
                 .map_err(|error| format!("dict.providers 含非法源 id: {error}"))?;
         }
-        if self.plugins_dir.trim().is_empty() {
+        if self.plugins_dir.as_os_str().is_empty()
+            || self.plugins_dir.to_string_lossy().trim().is_empty()
+        {
             return Err("dict.plugins_dir 不能为空".into());
         }
         if !(1..=256).contains(&self.max_plugins) {
@@ -179,7 +183,7 @@ mod tests {
         let cfg = DictConfig::default();
         assert!(cfg.enabled);
         assert!(cfg.providers.is_empty(), "缺省启用全部已安装插件");
-        assert_eq!(cfg.plugins_dir, "./plugins");
+        assert_eq!(cfg.plugins_dir, std::path::Path::new("./data/plugins"));
         assert_eq!(cfg.plugins_poll_secs, 5);
         assert_eq!(cfg.max_plugins, 32);
         assert_eq!(cfg.timeout_ms, 6000);
@@ -242,7 +246,7 @@ mod tests {
                 ..DictConfig::default()
             },
             DictConfig {
-                plugins_dir: "  ".into(),
+                plugins_dir: std::path::PathBuf::from("  "),
                 ..DictConfig::default()
             },
         ];

@@ -25,7 +25,7 @@ dict:
   # 示例包在 examples/plugins/，从设置页「导入插件」手动装载。
   providers: []
   # 插件目录：运行时读取 *.json；目录为空也可启动，之后从设置页导入
-  plugins_dir: "./plugins"
+  plugins_dir: "./data/plugins"
   # 目录轮询间隔（秒）：0 = 关闭自动发现；默认 5 秒，新增/删除插件文件后自动重载
   plugins_poll_secs: 5
   max_plugins: 32             # 插件数量上限（1..=256）

@@ -23,7 +23,7 @@
 │   ├── migration/          数据库迁移
 │   └── xtask/              仓库维护：示例插件校验
 ├── examples/               示例插件、fixtures、goldens（不进运行时）
-├── plugins/                运行时插件目录（默认为空，从设置页导入）
+├── data/                   运行数据：SQLite 数据库 + plugins/ 插件目录（Docker 挂载）
 ├── frontend/               前端 SPA（src/generated/ 为 ts-rs 生成契约类型）
 ├── Dockerfile              多阶段构建：node → rust(musl 静态) → scratch（约 20MB）
 ├── docker-compose.yml      一键容器化部署（数据挂载 ./data/）
@@ -80,15 +80,15 @@ cd frontend && npm run test && npm run build
 
 词典抓取是**运行时装载的声明式配方插件**，不是编译进二进制的 Rust 模块：
 
-- 运行时只从 `plugins/*.json` 装载，仓库不内置任何源；8 个示例包在 `examples/plugins/`，仅用于测试与手动导入；
+- 运行时只从 `data/plugins/*.json` 装载，仓库不内置任何源；8 个示例包在 `examples/plugins/`，仅用于测试与手动导入；
 - 设置页「词典源」只做列表、启停、导入、删除；目录默认 5 秒轮询，文件增删自动重载；
-- 导入 = multipart 上传 JSON，服务端重新校验后写 `plugins/<id>.json` 并立即生效；删除会移除对应文件；
+- 导入 = multipart 上传 JSON，服务端重新校验后写 `data/plugins/<id>.json` 并立即生效；删除会移除对应文件；
 - 配方支持 JSON/HTML 提取、变量、变换、条件、释义策略与建议列表，安全上限（主机白名单、包体/响应大小、条数）由内核强制；
 - 完整格式、字段、调试与移动端嵌入见 [`docs/dev/plugins.md`](docs/dev/plugins.md)。
 
 ```bash
 cargo run -p xtask -- validate-plugins            # 校验 examples/plugins
-cargo run -p xtask -- validate-plugins ./plugins  # 校验运行时目录
+cargo run -p xtask -- validate-plugins ./data/plugins  # 校验运行时目录
 ```
 
 ## API 一览
@@ -119,7 +119,7 @@ docker compose up -d --build   # 构建并启动，访问 http://localhost:3000
 
 - 镜像约 20MB（scratch + musl 静态链接二进制，仅含可执行文件与 CA 证书）
 - 构建缓存：cargo registry 与 target 挂 BuildKit cache mount，依赖未变时改码重建约 1 分钟
-- 数据持久化在 `./data/`（SQLite），可直接 `sqlite3 data/quan_word.db` 查看/备份
+- 数据持久化在 `./data/`（SQLite + `plugins/`），可直接 `sqlite3 data/quan_word.db` 查看/备份
 - 自定义配置（auth_key / 切换 PostgreSQL）见 docker-compose.yml 内注释
 
 ### 本地构建

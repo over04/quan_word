@@ -9,7 +9,7 @@ use crate::plugin_source::PluginSource;
 use crate::recipe::validate::validate_host_pattern;
 use crate::recipe::Recipe;
 
-/// 插件包：清单 + 配方（`plugins/<id>.json` 的根结构）。
+/// 插件包：清单 + 配方（`data/plugins/<id>.json` 的根结构）。
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginPackage {
