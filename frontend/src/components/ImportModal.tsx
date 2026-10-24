@@ -9,6 +9,9 @@ import {
 } from '../api'
 import Modal from './Modal'
 import Pagination from './Pagination'
+import ConfirmModal from './ConfirmModal'
+import DiscardConfirmModal from './DiscardConfirmModal'
+import { useDiscardGuard, useUnsavedChanges } from '../hooks/useUnsavedChanges'
 import { DownloadIcon, UploadIcon } from './Icons'
 
 interface Props {
@@ -79,6 +82,12 @@ export default function ImportModal({ bookId, onClose, onImported }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
   const editTimer = useRef<number | null>(null)
   const reqSeq = useRef(0)
+  // 返回选文件（丢弃预览）确认
+  const [confirmBack, setConfirmBack] = useState(false)
+  // 预览会话存在即视为未保存（关闭会丢失上传/预览/草稿）
+  const dirty = phase === 'preview'
+  const guard = useDiscardGuard(dirty, handleClose)
+  useUnsavedChanges(dirty)
 
   /** 当前页按组分组（后端已按组切片，页内组完整） */
   const grouped = useMemo(() => {
@@ -267,7 +276,18 @@ export default function ImportModal({ bookId, onClose, onImported }: Props) {
     onClose()
   }
 
+  function requestClose() {
+    if (busy || confirmBack) return
+    guard.requestClose()
+  }
+
   function backToPick() {
+    if (busy) return
+    setConfirmBack(true)
+  }
+
+  function discardPreview() {
+    setConfirmBack(false)
     setPreview(null)
     setDrafts(new Map())
     setSkipRows(new Set())
@@ -285,7 +305,7 @@ export default function ImportModal({ bookId, onClose, onImported }: Props) {
   const labelClass = 'shrink-0 text-[10px] text-charcoal/40 w-7'
 
   return (
-    <Modal onClose={handleClose} maxWidth="max-w-5xl">
+    <Modal onClose={requestClose} maxWidth="max-w-5xl">
       <div className="flex items-center gap-3">
         <div className="w-9 h-9 rounded-full bg-sage flex items-center justify-center text-white">
           <UploadIcon className="w-4 h-4" />
@@ -611,6 +631,20 @@ export default function ImportModal({ bookId, onClose, onImported }: Props) {
           </button>
         )}
       </div>
+
+      {confirmBack && (
+        <ConfirmModal
+          title="返回将丢弃当前预览"
+          message="已上传的文件、行修正与预览结果都会被丢弃，确定返回吗？"
+          confirmText="返回"
+          onConfirm={discardPreview}
+          onCancel={() => setConfirmBack(false)}
+        />
+      )}
+
+      {guard.confirmOpen && (
+        <DiscardConfirmModal onDiscard={guard.confirmDiscard} onCancel={guard.cancelDiscard} />
+      )}
     </Modal>
   )
 }

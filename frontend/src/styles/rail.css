@@ -1,0 +1,323 @@
+/* 网络词典右栏 —— 由 rail-builder 独占维护。
+   视觉口径 = docs/dev/style.md（Visual Organic）：白纸卡 + 徽章胶囊 + 项目主/次按钮。
+   本文件只保留 Tailwind 工具类写不了的六件事：
+
+     1) 结果流与来源下拉的滚动条（6px 圆头拇指 + 完全透明轨道 + 无箭头）；
+     2) 结果流底部留白（不画遮挡条，任何滚动位置都没有线穿过 44 控件）；
+     3) 勾选框（16px 圆角方框，命中区是整行 .rail-def-body，方框本身不参与触控）
+        + 已选行的 3px clay 左标（与勾选框一起让「已勾 / 未勾」一眼可扫）；
+     4) 勾选脉冲（关键帧 + data 属性选择器）与「已加入」徽章的 180ms 淡入；
+     5) 来源下拉的入场（180ms opacity + translateY(-4px)，只碰 transform / opacity）；
+     6) 手机（<768）的头部 / 义项行收口（见文件末尾，桌面一行都不碰）。
+
+   其余排版（圆角 / 墨阶 / 间距 / 字级 / 按钮形态）一律写在 DictSearchPanel.tsx 的 className 里，
+   不再维护第二套墨量阶梯。动效只碰 transform / opacity，
+   入场用项目现有的 animate-fade-in-up / animate-result-in（已在 index.css 登记）。 */
+
+/* ============================ 结果流 ============================ */
+
+.rail-flow {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  /* 滚动条：6px 圆头拇指 + 完全透明的轨道（不出现灰色槽）+ 无箭头。
+     UA 的 16px 灰条会把右硬边推出去 16px，也会在白卡上留一条灰槽。 */
+  scrollbar-width: thin;
+  scrollbar-color: rgb(47 42 37 / 0.18) transparent;
+}
+
+.rail-flow::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.rail-flow::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.rail-flow::-webkit-scrollbar-thumb {
+  background-color: rgb(47 42 37 / 0.18);
+  border-radius: 9999px;
+  border: 0;
+}
+
+/* 悬停整条拇指提到 0.3：用容器 :hover 而不是 thumb:hover（Safari 不认后者） */
+.rail-flow:hover::-webkit-scrollbar-thumb {
+  background-color: rgb(47 42 37 / 0.3);
+}
+
+.rail-flow::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.rail-flow::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ============================ 来源下拉 ============================
+   面板高度由组件按「面板顶 → 白卡下沿」算出来写在 style 上（白卡 overflow:hidden，
+   超出下沿会被裁掉），这里只负责超出时内部滚动，与结果流同一套 6px 拇指。 */
+
+.rail-menu {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  scrollbar-color: rgb(47 42 37 / 0.18) transparent;
+  /* 整块不再「瞬间出现」：180ms 淡入 + 自上方 4px 落位。
+     只碰 opacity / transform（不触发重排，白卡高度不抖）；
+     不加 delay、不加 fill-mode —— 结束即回到自然终态，元素上不留常驻 transform。
+     关闭按瞬时处理：下拉是轻量浮层，等淡出反而挡住下一次点击。 */
+  animation: railMenuIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes railMenuIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rail-menu::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.rail-menu::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.rail-menu::-webkit-scrollbar-thumb {
+  background-color: rgb(47 42 37 / 0.18);
+  border-radius: 9999px;
+  border: 0;
+}
+
+.rail-menu::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.rail-menu::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 结果流底部只留留白（原 40px 遮挡条已删除：它会横切最后一行义项与行尾 44 圆环，
+   实测行 647–707 被遮挡条 634–674 切在字腰上，比不遮更乱）。
+   最后一行与底栏之间由 .rail-flow 的 padding-bottom 保证 ≥12px。 */
+/* ============================ 勾选框 ============================
+   6px 圆角方框，选中 = clay 描边 + clay 勾（不填色）。
+   命中区是整行（.rail-def-body 的 ≥44），方框本身不参与触控。
+   正文 15px / 行高 1.6（首行 24px），16px 方框居中到首行 → margin-top 4px。 */
+
+.rail-root .rail-check {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 4px;
+  border: 1px solid rgb(47 42 37 / 0.15);
+  border-radius: 6px;
+  background-color: transparent;
+  color: transparent;
+  transition: border-color 0.18s ease, color 0.18s ease;
+}
+
+.rail-root .rail-check-ico {
+  /* 24 viewBox 缩到 12：stroke-width 3.2 用户单位 ≈ 视觉 1.6px（沿用 bench.css 的实测口径） */
+  width: 12px;
+  height: 12px;
+  stroke-width: 3.2;
+}
+
+.rail-root .rail-def-body[aria-pressed='true'] > .rail-check {
+  border-color: #c58f6d;
+  background-color: transparent;
+  color: #c58f6d;
+}
+
+/* ============================ 已选行左标 ============================
+   16px 勾选框只在行首占 16px，扫一列义项时不够醒目；再加一条 3px clay 细标。
+   伪元素绝对定位（行本身是 flex 容器，绝对定位的伪元素不参与布局）→ 行高仍是 68 / 56，
+   桌面 / 手机的 padding 账一行都不用改。未选 = opacity 0（淡出 180ms），不占视觉。 */
+
+.rail-root .rail-def-row {
+  position: relative;
+}
+
+.rail-root .rail-def-row::before {
+  content: '';
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 4px;
+  width: 3px;
+  border-radius: 9999px;
+  background-color: #c58f6d;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+  pointer-events: none;
+}
+
+.rail-root .rail-def-row[data-picked='true']::before {
+  opacity: 1;
+}
+
+/* ============================ 勾选脉冲（柔和版） ============================
+   勾选/加入一条：整行 1px 回弹（0.4% 缩放，180ms ease-out），勾选框 0.8 → 1。
+   只碰 transform / opacity，与入场动画（在 li 上）不共用同一条 animation 声明。 */
+
+@keyframes railPickSoft {
+  from {
+    transform: translate3d(0, 1px, 0) scale(0.996);
+  }
+  to {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@keyframes railPickCheck {
+  from {
+    transform: scale(0.8);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+.rail-root [data-pulse='true'] {
+  animation: railPickSoft 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.rail-root [data-pulse='true'] .rail-check {
+  animation: railPickCheck 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+/* ============================ 「已加入」徽章淡入 ============================
+   行尾 44 圆钮「+」换成「已加入」徽章时，徽章是重新挂载的节点：
+   直接出现会「啪」一下跳出来（宽度也从 44 变成胶囊）。180ms 淡入 + 4px 右移落位，
+   只碰 opacity / transform，布局宽度在动画开始前就已定格，不抖。 */
+
+@keyframes railAddedIn {
+  from {
+    opacity: 0;
+    transform: translateX(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.rail-root .rail-added {
+  animation: railAddedIn 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* ==================== 手机（<768）：头部与义项行收口 ====================
+   390×844 上下分屏（纸卡 34% / 把手 44 / 白卡吃剩余 ≈425）时，
+   白卡里 搜索 57 + 来源 61 + 底栏 57 + 描边 2 之后结果流只剩 ≈248。
+   收口前：头部 143 + 「释义」标题 32 = 175，第一条义项一个字都露不出来（只看到空白 + 底栏）。
+   收口后：头部 ≈92（≤96）+ 标题 ≈38 → 剩 ≈117 → 完整 2 条（2×56=112）+ 第 3 条上沿。
+
+   头部账（<768）：padding 12 + 词头 22×1.15≈25 + 音标行间距 2 + 音标行 40（「加入音标」44 撑起，
+     负外边距收 4）+ 12 + 1px 下描边 ≈ 92。
+     来源徽章行（sand 胶囊 + 原文）在 <768 隐藏 —— 来源已由上方 44 高的下拉显示，省掉 44+8。
+     音标与「加入音标」同一行内联：行高由按钮给，按钮不再单独占一行。
+
+   义项行账（<768）：padding-block 8×2 + 内容 40 = 56（原 68 = 12×2 + 44）。
+     正文 15px/1.5（22.5）在 44 的命中区里垂直居中；「+」视觉仍是 44，
+     靠 margin-block:-2 把布局高度收到 40 —— 命中区不缩（44），也不越到邻行（行内留白 8）。
+     两行释义时行高自然涨到 57，不裁字。
+
+   桌面（≥768）完全不进这个块：头部仍是 28px 三行（词头 / 音标 / 来源徽章）+ py-3/py-4，行高仍 68。 */
+
+@media (max-width: 767px) {
+  .rail-root .rail-head {
+    padding-block: 12px;
+  }
+
+  .rail-root .rail-word {
+    font-size: 22px;
+    line-height: 1.15;
+  }
+
+  /* 音标 + 「加入音标」同一行：行高由按钮给（44 的钮占 40 布局），间距从 4 收到 2 */
+  .rail-root .rail-phon {
+    margin-top: 2px;
+    flex-wrap: nowrap;
+  }
+
+  /* 来源徽章行隐藏（来源看上方下拉） */
+  .rail-root .rail-source {
+    display: none;
+  }
+
+  /* 义项行 68 → 56：垂直居中让正文与「+」在同一条中线上 */
+  .rail-root .rail-def-row {
+    align-items: center;
+    padding-block: 8px;
+  }
+
+  .rail-root .rail-def-body {
+    align-items: center;
+    min-height: 44px;
+    margin-block: -2px;
+    padding-block: 0;
+  }
+
+  /* 44 的命中区里正文居中 → 勾选框跟着居中（margin-top 归零）。
+     单行释义与桌面观感一致；两行时方框对齐整块中线，不再钉首行（手机行矮，居中更稳）。 */
+  .rail-root .rail-def-body .rail-check {
+    margin-top: 0;
+  }
+
+  /* 行内 44 圆钮（音标 / 义项「+」）：视觉与命中区都还是 44，
+     靠 margin-block:-2 把布局高度收到 40 —— 音标行 40、义项行内容 40（行高 56）。 */
+  .rail-root .rail-add {
+    margin-block: -2px;
+  }
+
+  .rail-root .rail-def-row .rail-added {
+    margin-top: 0;
+  }
+
+  /* 行高 56 → 左标两端各留 8（桌面 68 时是 10） */
+  .rail-root .rail-def-row::before {
+    top: 8px;
+    bottom: 8px;
+  }
+
+  .rail-root .rail-def-text {
+    line-height: 1.5;
+  }
+}
+
+/* ============================ 降级 ============================ */
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-root [data-pulse='true'],
+  .rail-root [data-pulse='true'] .rail-check,
+  .rail-root .rail-menu,
+  .rail-root .rail-added {
+    animation: none;
+  }
+
+  .rail-root .rail-check,
+  .rail-root .rail-def-row::before {
+    transition: none;
+  }
+}

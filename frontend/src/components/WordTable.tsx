@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { words, type Page, type Tag, type TagFilter, type Word } from '../api'
+import ConfirmModal from './ConfirmModal'
 import ImportModal from './ImportModal'
 import Pagination from './Pagination'
 import TagPickerModal from './TagPickerModal'
@@ -73,6 +74,8 @@ export default function WordTable({
   const [importOpen, setImportOpen] = useState(false)
   // 批量打标签弹窗
   const [tagPickerOpen, setTagPickerOpen] = useState(false)
+  // 批量删除确认（替代 window.confirm）
+  const [pendingBatchDelete, setPendingBatchDelete] = useState<number[] | null>(null)
   // 上次筛选（引用比较）：变化时重置页码且不发起旧页请求
   const prevTagRef = useRef<{ tagFilter: TagFilter }>({ tagFilter })
   // 标签 id → 名称映射（行内 chips）
@@ -151,10 +154,14 @@ export default function WordTable({
     })
   }
 
-  async function handleBatchDelete() {
+  function handleBatchDelete() {
     const ids = [...selected]
     if (ids.length === 0) return
-    if (!window.confirm(`确定删除选中的 ${ids.length} 个单词吗？`)) return
+    setPendingBatchDelete(ids)
+  }
+
+  async function confirmBatchDelete(ids: number[]) {
+    setPendingBatchDelete(null)
     try {
       await words.batchDelete(bookId, ids)
       setSelected(new Set())
@@ -175,7 +182,7 @@ export default function WordTable({
             onChange={(e) => onQChange(e.target.value)}
             placeholder="搜索单词或释义"
             aria-label="搜索单词或释义"
-            className="w-full bg-white rounded-full border border-charcoal/10 pl-10 pr-4 py-2.5 text-sm text-charcoal placeholder:text-charcoal/30 focus:border-clay focus:outline-none transition-colors"
+            className="w-full bg-white rounded-full border border-charcoal/10 pl-10 pr-4 min-h-11 text-sm text-charcoal placeholder:text-charcoal/30 focus:border-clay focus:outline-none transition-colors"
           />
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -188,7 +195,7 @@ export default function WordTable({
                   setSort(s.key)
                   setPage(1)
                 }}
-                className={`inline-flex items-center px-4 py-1.5 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap ${
+                className={`inline-flex items-center min-h-11 px-4 rounded-full text-sm font-medium transition-all duration-200 whitespace-nowrap ${
                   sort === s.key ? 'bg-charcoal text-ivory shadow-md' : 'text-charcoal/70 hover:text-charcoal'
                 }`}
               >
@@ -202,21 +209,21 @@ export default function WordTable({
               setOrder((o) => (o === 'asc' ? 'desc' : 'asc'))
               setPage(1)
             }}
-            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full border border-charcoal/15 text-sm font-medium text-charcoal/70 hover:text-charcoal hover:border-charcoal/30 transition-all whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 min-h-11 px-4 rounded-full border border-charcoal/15 text-sm font-medium text-charcoal/70 hover:text-charcoal hover:border-charcoal/30 active:scale-95 transition-all whitespace-nowrap"
           >
             <ArrowsUpDownIcon className="w-3.5 h-3.5" />
             {order === 'asc' ? '升序' : '降序'}
           </button>
           <button
             onClick={() => setImportOpen(true)}
-            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full border border-charcoal/15 text-sm font-medium text-charcoal/70 hover:text-charcoal hover:border-charcoal/30 transition-all whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 min-h-11 px-4 rounded-full border border-charcoal/15 text-sm font-medium text-charcoal/70 hover:text-charcoal hover:border-charcoal/30 active:scale-95 transition-all whitespace-nowrap"
           >
             <UploadIcon className="w-3.5 h-3.5" />
             导入
           </button>
           <button
             onClick={onManageTags}
-            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full border border-charcoal/15 text-sm font-medium text-charcoal/70 hover:text-charcoal hover:border-charcoal/30 transition-all whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 min-h-11 px-4 rounded-full border border-charcoal/15 text-sm font-medium text-charcoal/70 hover:text-charcoal hover:border-charcoal/30 active:scale-95 transition-all whitespace-nowrap"
           >
             <TagIcon className="w-3.5 h-3.5" />
             标签管理
@@ -232,14 +239,14 @@ export default function WordTable({
           </span>
           <button
             onClick={handleBatchDelete}
-            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full border border-charcoal/10 text-charcoal/60 text-xs font-medium hover:border-red-300 hover:text-red-400 transition-colors whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 min-h-11 px-4 rounded-full border border-charcoal/10 text-charcoal/60 text-xs font-medium hover:border-red-300 hover:text-red-400 active:scale-95 transition-all whitespace-nowrap"
           >
             <TrashIcon className="w-3.5 h-3.5" />
             删除所选
           </button>
           <button
             onClick={() => setTagPickerOpen(true)}
-            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full border border-charcoal/10 text-charcoal/60 text-xs font-medium hover:border-clay hover:text-clay transition-colors whitespace-nowrap"
+            className="inline-flex items-center gap-1.5 min-h-11 px-4 rounded-full border border-charcoal/10 text-charcoal/60 text-xs font-medium hover:border-clay hover:text-clay active:scale-95 transition-all whitespace-nowrap"
           >
             <TagIcon className="w-3.5 h-3.5" />
             打标签
@@ -266,13 +273,16 @@ export default function WordTable({
               <thead>
                 <tr className="text-xs font-bold text-charcoal/40 uppercase tracking-widest">
                   <th className="px-5 py-5 w-12">
-                    <input
-                      type="checkbox"
-                      checked={allSelected}
-                      onChange={toggleAll}
-                      aria-label="全选本页"
-                      className="accent-charcoal cursor-pointer"
-                    />
+                    {/* 勾选框本体保持小尺寸，用 label 撑出 44 命中区 */}
+                    <label className="inline-flex items-center justify-center w-11 h-11 -my-2 -ml-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={toggleAll}
+                        aria-label="全选本页"
+                        className="accent-charcoal cursor-pointer"
+                      />
+                    </label>
                   </th>
                   <th className="px-5 py-5">单词</th>
                   <th className="px-5 py-5">音标</th>
@@ -292,14 +302,18 @@ export default function WordTable({
                     }`}
                   >
                     <td className="px-5 py-3.5">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(w.id)}
-                        onChange={() => toggleOne(w.id)}
+                      <label
+                        className="inline-flex items-center justify-center w-11 h-11 -my-2 -ml-2 cursor-pointer"
                         onClick={(e) => e.stopPropagation()}
-                        aria-label={`选择 ${w.spelling}`}
-                        className="accent-charcoal cursor-pointer"
-                      />
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected.has(w.id)}
+                          onChange={() => toggleOne(w.id)}
+                          aria-label={`选择 ${w.spelling}`}
+                          className="accent-charcoal cursor-pointer"
+                        />
+                      </label>
                     </td>
                     <td className="px-5 py-3.5 font-serif text-base text-charcoal">{w.spelling}</td>
                     <td className="px-5 py-3.5 text-sm text-charcoal/45">{w.phonetic ?? '—'}</td>
@@ -340,7 +354,7 @@ export default function WordTable({
                             e.stopPropagation()
                             onEdit(w)
                           }}
-                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-sand/50 text-charcoal/80 text-xs font-medium hover:bg-sand/80 transition-colors whitespace-nowrap"
+                          className="inline-flex items-center gap-1.5 min-h-11 px-3.5 rounded-full bg-sand/50 text-charcoal/80 text-xs font-medium hover:bg-sand/80 active:scale-95 transition-all whitespace-nowrap"
                         >
                           <PencilIcon className="w-3.5 h-3.5" />
                           编辑
@@ -350,7 +364,7 @@ export default function WordTable({
                             e.stopPropagation()
                             onDelete(w)
                           }}
-                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full border border-charcoal/10 text-charcoal/50 text-xs font-medium hover:border-red-300 hover:text-red-400 transition-colors whitespace-nowrap"
+                          className="inline-flex items-center gap-1.5 min-h-11 px-3.5 rounded-full border border-charcoal/10 text-charcoal/50 text-xs font-medium hover:border-red-300 hover:text-red-400 active:scale-95 transition-all whitespace-nowrap"
                         >
                           <TrashIcon className="w-3.5 h-3.5" />
                           删除
@@ -367,14 +381,18 @@ export default function WordTable({
               {data.items.map((w) => (
                 <div key={w.id} onClick={() => onEdit(w)} className="px-6 py-5 cursor-pointer">
                   <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      checked={selected.has(w.id)}
-                      onChange={() => toggleOne(w.id)}
+                    <label
+                      className="inline-flex items-center justify-center w-11 h-11 -my-2 -ml-2 shrink-0 cursor-pointer"
                       onClick={(e) => e.stopPropagation()}
-                      aria-label={`选择 ${w.spelling}`}
-                      className="accent-charcoal cursor-pointer shrink-0"
-                    />
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selected.has(w.id)}
+                        onChange={() => toggleOne(w.id)}
+                        aria-label={`选择 ${w.spelling}`}
+                        className="accent-charcoal cursor-pointer shrink-0"
+                      />
+                    </label>
                     <div className="flex items-baseline justify-between gap-3 flex-1 min-w-0">
                       <span className="font-serif text-base text-charcoal truncate">{w.spelling}</span>
                       {w.phonetic && <span className="text-xs text-charcoal/45 shrink-0">{w.phonetic}</span>}
@@ -402,7 +420,7 @@ export default function WordTable({
                         e.stopPropagation()
                         onEdit(w)
                       }}
-                      className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-sand/50 text-charcoal/80 text-xs font-medium whitespace-nowrap"
+                      className="inline-flex items-center gap-1 min-h-11 px-3.5 rounded-full bg-sand/50 text-charcoal/80 text-xs font-medium active:scale-95 transition-all whitespace-nowrap"
                     >
                       <PencilIcon className="w-3 h-3" />
                       编辑
@@ -412,7 +430,7 @@ export default function WordTable({
                         e.stopPropagation()
                         onDelete(w)
                       }}
-                      className="inline-flex items-center gap-1 px-3 py-1 rounded-full border border-charcoal/10 text-charcoal/50 text-xs font-medium whitespace-nowrap"
+                      className="inline-flex items-center gap-1 min-h-11 px-3.5 rounded-full border border-charcoal/10 text-charcoal/50 text-xs font-medium active:scale-95 transition-all whitespace-nowrap"
                     >
                       <TrashIcon className="w-3 h-3" />
                       删除
@@ -428,8 +446,14 @@ export default function WordTable({
         <Pagination page={page} totalPages={data.total_pages} onPrev={() => setPage((p) => p - 1)} onNext={() => setPage((p) => p + 1)} />
       )}
 
-      {importOpen && (
-        <ImportModal bookId={bookId} onClose={() => setImportOpen(false)} onImported={onMutated} />
+      {pendingBatchDelete && (
+        <ConfirmModal
+          title={`删除选中的 ${pendingBatchDelete.length} 个单词？`}
+          message="删除后无法恢复。"
+          confirmText="确认删除"
+          onCancel={() => setPendingBatchDelete(null)}
+          onConfirm={() => void confirmBatchDelete(pendingBatchDelete)}
+        />
       )}
 
       {tagPickerOpen && (

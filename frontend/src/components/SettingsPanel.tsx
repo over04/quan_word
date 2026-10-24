@@ -6,6 +6,8 @@ interface Props {
   onChangePageSize: (n: number) => void
   onChangeFontScale: (s: number) => void
   onClose: () => void
+  /** 正在播退场（usePresence）：只影响样式，不影响行为 */
+  closing?: boolean
 }
 
 const PAGE_SIZE_MIN = 10
@@ -20,13 +22,17 @@ export default function SettingsPanel({
   onChangePageSize,
   onChangeFontScale,
   onClose,
+  closing = false,
 }: Props) {
   // 滑块拖动中的临时值：拖动结束（松开/键盘）才应用
   const [draftSize, setDraftSize] = useState(pageSize)
   const [draftFont, setDraftFont] = useState(fontScale)
 
   return (
-    <div className="absolute right-0 top-12 z-50 w-72 bg-white rounded-2xl border border-charcoal/10 shadow-xl shadow-charcoal/10 p-5 animate-fade-in-up">
+    <div
+      data-state={closing ? 'closing' : 'open'}
+      className="ui-pop absolute right-0 top-12 z-50 w-72 bg-white rounded-2xl border border-charcoal/10 shadow-xl shadow-charcoal/10 p-5 animate-fade-in-up"
+    >
       <div className="flex items-center justify-between">
         <p className="font-serif text-base text-charcoal">显示设置</p>
         <button

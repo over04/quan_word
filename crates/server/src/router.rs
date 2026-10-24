@@ -6,6 +6,8 @@ use parking_lot::Mutex;
 use sea_orm::DatabaseConnection;
 use tower_http::compression::CompressionLayer;
 
+use crate::business::dict;
+use crate::business::dict::state::DictState;
 use crate::business::wordbooks;
 use crate::common::auth;
 use crate::common::http::spa::static_handler;
@@ -16,17 +18,22 @@ use crate::config::Config;
 /// `api_key` 为 config server.auth_key；非 None 时所有 /api 请求需携带密钥。
 /// 同时启动导入预览会话的后台清理任务（随进程结束而终止）。
 pub fn build(db: DatabaseConnection, api_key: Option<String>, config: Config) -> Router {
+    let dict_state = Arc::new(DictState::new(&config.dict));
+    dict_state.spawn_cleaner();
     let state = AppState {
         db: Arc::new(db),
         api_key: api_key.map(Arc::from),
         wordbooks_cache: Arc::new(Mutex::new(None)),
         shuffle_cache: Arc::new(Mutex::new(HashMap::new())),
         import_cache: Arc::new(Mutex::new(HashMap::new())),
+        dict: dict_state,
         config,
     };
     state.spawn_import_cache_cleaner();
     // api 路由挂鉴权层（静态资源不设防，前端 401 时引导输入密钥）
-    let api = Router::new().merge(wordbooks::router::router());
+    let api = Router::new()
+        .merge(wordbooks::router::router())
+        .merge(dict::router::router());
     Router::new()
         .merge(api.layer(axum::middleware::from_fn_with_state(
             state.clone(),

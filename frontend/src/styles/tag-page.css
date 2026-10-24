@@ -1,0 +1,246 @@
+/* 管理标签页 —— 纸卡形态（Visual Organic）
+   只放这一个界面的版式/动效类，不要动 index.css 的全局规则。
+
+   版面（Modal 的 page 形态：bg-ivory + AmbientBackground，页面本身不再铺纸）：
+     顶条（返回 44 + 衬线标题 + 未保存计数徽章）
+     正文区：居中纸卡，高度撑满「顶条底 → 视口底」（四周仍留 16–24px，环境底图透出）
+        └ 下层垫纸 #F2EAE0 位移 8px（.tag-paper::before），随纸卡同高
+        └ 纸卡内侧 = 两栏网格（标签区 + 右栏「待保存改动」卡，两栏等高）+ 贴底操作条
+        └ 列表卡 / 右栏清单各自滚动（6px 胶囊滚动条），纸卡本身不滚：
+          内容少时下方的空白属于卡片内部，不是页面背景
+     贴底操作条：取消（描边胶囊）+ 保存（实心胶囊），钉在纸卡底部内侧
+     <768 单列：右栏落到列表下方，列表卡 2/3、右栏 1/3，两卡仍各自滚动。
+
+   本文件只保留 Tailwind 表达不了的东西：整页纵向骨架、滚动条、纸卡网格与垫纸、计数翻牌。
+   视觉 token 一律走项目 Tailwind 色板（charcoal/70、sand/20、clay…），不再自造墨阶；
+   圆角 / 阴影 / 描边写在组件的工具类上（rounded-2xl / shadow-sm / border-charcoal/5）。 */
+
+.tag-page {
+  /* 纸卡与视口边缘的距离（环境底图从这里透出）/ 纸卡内边距 / 右栏 / 栏间 / 表单上限 / 纸卡内容下限 */
+  --tag-pad: 16px;
+  --tag-card-pad: 20px;
+  --tag-aside: 288px;
+  --tag-gutter: 24px;
+  --tag-form-max: 880px;
+  --tag-paper-min: 420px;
+
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  font-family: var(--font-sans, 'Plus Jakarta Sans', 'PingFang SC', 'Noto Sans SC', system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+}
+
+@media (min-width: 768px) {
+  .tag-page {
+    --tag-pad: 24px;
+    --tag-card-pad: 28px;
+    --tag-aside: 336px;
+    --tag-gutter: 32px;
+  }
+}
+
+/* 顶条 / 正文 / 操作条共用一条左轴：纸卡左缘 = 标题左缘。
+   1329 屏下：1281 - 56（纸卡内边距）- 32（栏间）- 336（右栏）→ 表单实宽 ≈ 857。 */
+.tag-shell {
+  width: 100%;
+  max-width: calc(
+    var(--tag-form-max) + var(--tag-aside) + var(--tag-gutter) + var(--tag-card-pad) * 2 +
+      var(--tag-pad) * 2
+  );
+  margin-inline: auto;
+  padding-inline: var(--tag-pad);
+}
+
+/* 正文区：纸卡撑满顶条与视口底之间的全部空间（1329×800 下纸卡底 ≈ 视口底 - 24，
+   不再出现「纸卡 370 + 下方 400 空背景」）。纸卡有 --tag-paper-min 的内容下限，
+   视口极矮时本区兜底滚动，列表不会被压成一条缝。 */
+.tag-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  /* 纸卡四周留白：上 12 / 下避让 Home Indicator（≥16） */
+  padding-block: 12px max(16px, env(safe-area-inset-bottom, 0px));
+}
+
+@media (min-width: 768px) {
+  .tag-main {
+    padding-block: 16px 24px;
+  }
+}
+
+/* 正文里的 shell 只负责把纸卡纵向拉满（顶条里的 shell 不受影响） */
+.tag-main > .tag-shell {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 细滚动条：6px 胶囊 thumb、全透明轨道、无箭头、无槽。
+   三处共用——正文兜底滚动 / 标签列表卡 / 右栏清单。 */
+.tag-main,
+.tag-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(47 42 37 / 0.18) transparent;
+}
+
+.tag-main::-webkit-scrollbar,
+.tag-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+/* 轨道必须完全透明：任何底色都会在纸面上留下一条灰色槽 */
+.tag-main::-webkit-scrollbar-track,
+.tag-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tag-main::-webkit-scrollbar-thumb,
+.tag-scroll::-webkit-scrollbar-thumb {
+  border: 0;
+  border-radius: 9999px;
+  background-color: rgb(47 42 37 / 0.18);
+}
+
+.tag-main::-webkit-scrollbar-thumb:hover,
+.tag-scroll::-webkit-scrollbar-thumb:hover {
+  background-color: rgb(47 42 37 / 0.3);
+}
+
+.tag-main::-webkit-scrollbar-button,
+.tag-scroll::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.tag-main::-webkit-scrollbar-corner,
+.tag-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 纸卡：撑满正文区高度（卡片本体 .tag-card 是它唯一的子元素）。
+   ::before 是下层垫纸，inset: 0 跟着纸卡一起长高；右侧/底部各留 8px，
+   垫纸的位移才不会被滚动容器裁掉。
+   注意：上面的 --tag-card-pad 必须与组件里纸卡的 p-5 md:p-7（20/28）保持一致，
+   否则 .tag-shell 的宽度上限会和实际纸卡内边距对不上。 */
+.tag-paper {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: var(--tag-paper-min);
+  margin: 0 8px 8px 0;
+}
+
+.tag-paper::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 1rem;
+  background-color: #f2eae0;
+  transform: translate3d(8px, 8px, 0);
+  pointer-events: none;
+}
+
+/* 卡片本体：纵向 = 两栏网格（可伸缩、内部各自滚动）+ 贴底操作条。
+   卡片高度跟着纸卡走（flex: 1），内容多少都不再决定纸卡高度。 */
+.tag-card {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 两栏：标签区（1fr）+ 右栏「待保存改动」；行高由纸卡剩余空间决定，
+   两栏都拉满行高（同高），列内各自滚动。 */
+.tag-sheet {
+  display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  /* <768 单列：列表卡 2/3、右栏 1/3（各自留出滚动空间，右栏不再只有两行高） */
+  grid-template-rows: minmax(0, 1fr) minmax(0, 0.5fr);
+  gap: 24px;
+}
+
+@media (min-width: 768px) {
+  .tag-sheet {
+    grid-template-columns: minmax(0, 1fr) var(--tag-aside);
+    grid-template-rows: minmax(0, 1fr);
+    gap: var(--tag-gutter);
+    align-items: stretch;
+  }
+}
+
+/* 右栏：固定头（标题 + 计数）+ 自身滚动的清单 / 垂直居中偏上的空态 */
+.tag-aside {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 贴底操作条：纸卡内侧的最后一行，与两栏之间一条发丝线；列表滚动不影响它。
+   错误行恒定 44 高（min-h-11），换文案不推挤版面。 */
+.tag-foot {
+  flex: 0 0 auto;
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid rgb(47 42 37 / 0.06);
+}
+
+/* 读屏专用文本 */
+.tag-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ================= 计数翻牌（唯一的自定义动效） =================
+   旧数向上翻出、新数从下方落位，0.2s，只碰 transform；
+   其余入场统一用项目现成的 animate-page-in / animate-fade-in-up（见 index.css）。 */
+@keyframes tagCountFlipOut {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(0, -100%, 0);
+  }
+}
+
+@keyframes tagCountFlipIn {
+  from {
+    transform: translate3d(0, 100%, 0);
+  }
+  to {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.tag-count-old {
+  animation: tagCountFlipOut 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.tag-count-new {
+  animation: tagCountFlipIn 0.2s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tag-count-old,
+  .tag-count-new {
+    animation: none;
+  }
+}

@@ -68,4 +68,32 @@ impl WordbookRepo {
             .count(db)
             .await
     }
+
+    /// 按拼写跨书查询（大小写不敏感）。
+    pub async fn find_words_by_spelling(
+        db: &DatabaseConnection,
+        spelling: &str,
+    ) -> Result<Vec<word::Model>, sea_orm::DbErr> {
+        word::Entity::find()
+            .filter(Expr::cust_with_values(
+                "LOWER(spelling) = ?",
+                [spelling.to_lowercase()],
+            ))
+            .order_by_asc(word::Column::Id)
+            .all(db)
+            .await
+    }
+
+    pub async fn find_books_by_ids(
+        db: &DatabaseConnection,
+        ids: &[i32],
+    ) -> Result<Vec<wordbook::Model>, sea_orm::DbErr> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        wordbook::Entity::find()
+            .filter(wordbook::Column::Id.is_in(ids.iter().copied()))
+            .all(db)
+            .await
+    }
 }

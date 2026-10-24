@@ -30,6 +30,10 @@ csv = "1.4.0"
 calamine = "0.36.1"
 encoding_rs = "0.8.35"
 rust_xlsxwriter = "0.97.0"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip", "charset"] }
+async-trait = "0.1"
+percent-encoding = "2"
+scraper = "0.29.0"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

@@ -5,6 +5,7 @@ use std::time::Instant;
 use parking_lot::Mutex;
 use sea_orm::DatabaseConnection;
 
+use crate::business::dict::state::DictState;
 use crate::business::wordbooks::dto::resp::WordbookResp;
 use crate::business::wordbooks::words::dto::import::ImportRowData;
 use crate::business::wordbooks::words::tag_group::TagGroup;
@@ -41,7 +42,9 @@ pub struct AppState {
     pub shuffle_cache: ShuffleCache,
     /// 导入预览会话缓存：token → 解析结果（TTL/容量由 config.import 控制）
     pub import_cache: ImportCache,
-    /// 应用配置（含 import 段的 TTL/容量/行数上限）
+    /// 词典域运行时状态（源实例 + 抓词缓存 + 熔断/单飞/并发闸门）
+    pub dict: Arc<DictState>,
+    /// 应用配置（含 import/dict 段的 TTL/容量/上限）
     pub config: Config,
 }
 

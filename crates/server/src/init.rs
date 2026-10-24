@@ -24,6 +24,11 @@ pub async fn run() -> Result<()> {
     let addr = format!("{}:{}", cfg.server.host, cfg.server.port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!("服务已启动: http://{addr}");
-    axum::serve(listener, app).await?;
+    // 带上连接信息：建议接口按客户端 IP 限流需要 ConnectInfo
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }

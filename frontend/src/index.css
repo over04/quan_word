@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* 各界面独占的版式/动效样式（谁负责的界面谁维护，避免改同一个文件互相踩） */
+@import "./styles/bench.css";
+@import "./styles/rail.css";
+@import "./styles/tag-page.css";
+
 @theme {
   --color-ivory: #f8f4ef;
   --color-charcoal: #2f2a25;
@@ -10,13 +15,26 @@
   --font-sans: 'Plus Jakarta Sans', 'PingFang SC', 'Hiragino Sans GB', 'Noto Sans SC', system-ui, sans-serif;
   --font-serif: 'DM Serif Display', 'Songti SC', 'STSong', 'Noto Serif SC', 'SimSun', serif;
 
-  --animate-fade-in-up: fadeInUp 0.8s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  --animate-fade-in: fadeIn 0.6s ease-out both;
+  /* 进场动画时长全部 < 0.62s（View Transition 的时长）：
+     转场期间元素自带的进场动画会被"压到终态"，转场结束时它们已经播完，
+     撤销覆盖不会二次入场 —— 这是消除"动画结束闪一下"的关键。 */
+  --animate-fade-in-up: fadeInUp 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-fade-in: fadeIn 0.5s ease-out both;
+  --animate-page-in: pageIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-step-in: stepIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-toast-in: toastIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-detail-in: detailIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-hero-in: heroIn 0.66s cubic-bezier(0.16, 1, 0.3, 1) both;
+  --animate-result-in: resultIn 0.5s cubic-bezier(0.18, 1.14, 0.4, 1) both;
+  --animate-bar-down: barDown 0.45s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+/* ================= 通用进场动画 =================
+   全部只动 transform / opacity：合成层直接插值，不触发布局与重绘。 */
+
 @keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(20px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translate3d(0, 22px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 
 @keyframes fadeIn {
@@ -24,98 +42,1377 @@
   to { opacity: 1; }
 }
 
-/* 弹窗：缩放浮现 */
+@keyframes pageIn {
+  from { opacity: 0; transform: translate3d(0, 30px, 0) scale(0.982); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes stepIn {
+  from { opacity: 0; transform: translate3d(24px, 0, 0) scale(0.992); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes detailIn {
+  from { opacity: 0; transform: translate3d(0, 40px, 0) rotateX(4deg) scale(0.972); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) rotateX(0deg) scale(1); }
+}
+
+/* 词头入场：位移 22px、缩放只到 0.975，透明度在前 30% 就走完 ——
+   原来的 0.94 缩放 + 16px 是一次「弹一下」，现在读作「纸上的字被轻轻推到位」。 */
+@keyframes heroIn {
+  0% { opacity: 0; transform: translate3d(0, 22px, 0) scale(0.975); }
+  30% { opacity: 1; }
+  100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+@keyframes resultIn {
+  0% { opacity: 0; transform: translate3d(0, 20px, 0) scale(0.968); }
+  62% { opacity: 1; }
+  100% { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+/* 顶栏入场：12px 落位 + 淡入（原来从 -100% 自身高度滑下，第一帧整条栏是空的） */
+@keyframes barDown {
+  from { opacity: 0; transform: translate3d(0, -12px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+
+/* 宿主已经是 flex justify-center 居中，这里再 -50% 会把提示条推到左边半宽之外 */
+@keyframes toastIn {
+  from { opacity: 0; transform: translate3d(0, 20px, 0) scale(0.9); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+/* ================= 滚动条：全站统一 =================
+   6px 圆头拇指 + 完全透明轨道 + 无箭头。以前只有三处专用文件写了这条，
+   详情页整页滚动、下拉面板这类容器仍会露出 UA 的 15px 灰条（截图里最右边那条）。
+   专用文件里的同名规则权重更高，行为不变。 */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(47 42 37 / 0.18) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgb(47 42 37 / 0.18);
+  border-radius: 9999px;
+  border: 0;
+}
+
+*::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* ================= 浮层退场 =================
+   条件渲染（{open && <Panel/>}）关闭时是瞬间卸载，节点直接没了 —— 收起筛选/设置/更多菜单
+   以前全是「啪」一下消失。usePresence 让节点多留 180ms，这里按 data-state='closing'
+   播「淡出 + 下沉 6px」，播完再卸载。 */
+
+@keyframes popOutSoft {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+}
+
+.ui-pop[data-state='closing'] {
+  animation: popOutSoft 0.18s cubic-bezier(0.4, 0, 1, 1) both;
+  pointer-events: none;
+}
+
+/* ================= 展开 / 收起 =================
+   grid-template-rows 0fr ↔ 1fr：内容高度未知也能平滑插值，不用测量、不用 max-height 猜数字。
+   结构：<div class="collapse" data-open><div>内容</div></div> */
+
+.collapse {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.28s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.collapse[data-open='true'] {
+  grid-template-rows: 1fr;
+}
+
+.collapse > * {
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* ================= 全局按压反馈 =================
+   用独立的 scale 属性而不是 transform：不会覆盖组件自己的 hover 位移
+   （transform: translateY / Tailwind 的 --tw-translate-*），也不产生跳动。
+   :where() 让组件自带的 transition-* 优先，避免破坏已有过渡。 */
+
+:where(button:not(:disabled)) {
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    scale 0.14s cubic-bezier(0.2, 0.8, 0.2, 1),
+    background-color 0.14s ease,
+    color 0.14s ease;
+}
+
+:where(button:not(:disabled)):active {
+  scale: 0.96;
+}
+
+/* ================= 表单控件：Safari / iOS 归一 =================
+   macOS / iOS Safari 会给控件套一层原生外观：select 保留内嵌边框与右侧箭头
+   （`appearance-none` 在 Safari 上要靠 -webkit- 前缀才生效）、input 在「圆角 + 底色」
+   下露出内层描边、搜索框还带放大镜/清除按钮。这些在 Chrome 里都看不到，
+   一上 Mac/iPhone 就变成截图里那种「框里还有一个框」。统一在这里抹掉，
+   外观只由工具类（border / bg / rounded）决定。
+   另外 iOS 对 font-size < 16px 的控件在聚焦时会自动放大整页 —— 窄屏统一 16px。 */
+
+/* 放进 @layer base（而不是 unlayered + !important）：作者样式本来就压过 UA 默认外观，
+   !important 只会让以后想用原生外观的控件（如 checkbox 之外的特殊控件）无法覆盖。
+   @layer base 里本块位于 preflight 之后，仍然胜出；utility 层可按需覆盖。 */
+@layer base {
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea {
+    -webkit-appearance: none;
+    appearance: none;
+    background-image: none;
+    background-clip: padding-box;
+    border-style: solid;
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+/* Safari 的输入框在「圆角 + 底色」下会沿边框内沿再画一圈浅色描边（截图里的「框里还有一个框」），
+   Firefox 会在聚焦时画一圈内嵌点线。两者都只由 UA 绘制，这里连同 :focus 的 UA 环一起关掉 ——
+   焦点可见性由下面的「描边转陶土 + 光晕」提供。 */
+@layer base {
+  input:focus,
+  textarea:focus,
+  select:focus,
+  input:focus-visible,
+  textarea:focus-visible,
+  select:focus-visible {
+    outline: none;
+  }
+}
+
+select::-ms-expand {
+  display: none;
+}
+
+input[type='search']::-webkit-search-decoration,
+input[type='search']::-webkit-search-cancel-button,
+input[type='search']::-webkit-search-results-button {
+  -webkit-appearance: none;
+  display: none;
+}
+
+@media (max-width: 767px) {
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* ================= 主页悬浮导航 =================
+   性能：不做 backdrop-filter。固定导航在滚动时每帧都要重新采样并模糊背景，
+   是移动端最贵的一笔；这里用高不透明度白 + 内高光 + 柔和投影静态还原玻璃感，
+   滚动过程中导航零重绘（只有 transform 层）。 */
+
+@keyframes navIn {
+  from { opacity: 0; transform: translate3d(0, -112%, 0) scale(0.985); }
+  62% { opacity: 1; }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+.animate-nav-in {
+  animation: navIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+.home-nav {
+  padding-top: max(0.75rem, env(safe-area-inset-top));
+  padding-bottom: 0.75rem;
+  contain: layout style;
+}
+
+.home-nav-card {
+  background-color: rgb(255 255 255 / 0.88);
+  box-shadow:
+    0 12px 34px -16px rgb(47 42 37 / 0.28),
+    0 1px 0 rgb(255 255 255 / 0.9) inset;
+  padding: 0.5rem 0.875rem;
+}
+
+@media (min-width: 768px) {
+  .home-nav-card {
+    background-color: rgb(255 255 255 / 0.82);
+    padding: 0.5rem 1.5rem;
+  }
+}
+
+.home-nav-brand {
+  min-height: 2.875rem;
+}
+
+.home-nav-logo {
+  transition: transform 0.55s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.3s ease;
+}
+
+.home-nav-brand:hover .home-nav-logo {
+  transform: rotate(-9deg) scale(1.07);
+}
+
+.home-nav-tabs {
+  margin-top: 0.375rem;
+  padding-top: 0.375rem;
+  border-top: 1px solid rgb(47 42 37 / 0.06);
+}
+
+@media (min-width: 768px) {
+  .home-nav-tabs {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: 0;
+  }
+}
+
+/* 分段控件：白色胶囊滑块用 transform 位移，切换 tab 只有一次合成层动画 */
+.nav-seg {
+  position: relative;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  width: 100%;
+  padding: 2px;
+  border-radius: 9999px;
+  background-color: rgb(229 216 200 / 0.34);
+  box-shadow: 0 1px 0 rgb(255 255 255 / 0.6) inset;
+}
+
+@media (min-width: 768px) {
+  .nav-seg {
+    width: auto;
+    grid-auto-columns: 5.25rem;
+  }
+}
+
+.nav-seg-pill {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / 2);
+  border-radius: 9999px;
+  background-color: #fff;
+  box-shadow:
+    0 2px 10px -3px rgb(47 42 37 / 0.28),
+    0 0 0 1px rgb(47 42 37 / 0.04);
+  transform: translate3d(0, 0, 0);
+  transition: transform 0.46s cubic-bezier(0.34, 1.42, 0.64, 1);
+  pointer-events: none;
+}
+
+.nav-seg-btn {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 46px > 44px 触控下限：分段控件有 2px 内边距，留出余量后实测仍 ≥44 */
+  min-height: 2.875rem;
+  padding: 0 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: rgb(47 42 37 / 0.45);
+  transition: color 0.28s ease, scale 0.14s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.nav-seg-btn:hover {
+  color: rgb(47 42 37 / 0.72);
+}
+
+.nav-seg-btn.is-active {
+  color: #2f2a25;
+}
+
+.nav-seg-btn:active {
+  scale: 0.97;
+}
+
+.home-nav-cta {
+  min-height: 2.875rem;
+  transition:
+    scale 0.14s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.32s cubic-bezier(0.16, 1, 0.3, 1),
+    background-color 0.3s ease,
+    box-shadow 0.32s ease;
+}
+
+.home-nav-cta:hover {
+  transform: translate3d(0, -1px, 0);
+  box-shadow: 0 14px 26px -14px rgb(47 42 37 / 0.55);
+}
+
+.home-nav-cta:active {
+  scale: 0.96;
+}
+
+.home-nav-cta svg {
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.home-nav-cta:hover svg {
+  transform: rotate(90deg);
+}
+
+/* ================= 书架卡片 ================= */
+
+.shelf-grid {
+  perspective: 1400px;
+}
+
+.shelf-card {
+  transform-style: preserve-3d;
+}
+
+@keyframes bookRise {
+  from { opacity: 0; transform: translate3d(0, 36px, 0) rotateX(9deg) scale(0.965); }
+  to { opacity: 1; transform: translate3d(0, 0, 0) rotateX(0deg) scale(1); }
+}
+
+.animate-book-rise {
+  animation: bookRise 0.6s cubic-bezier(0.16, 1, 0.3, 1) backwards;
+}
+
+/* —— 封面：一本真书的封面 ——
+   层次（自下而上）：布面色块 → 书脊（竖排书名）→ 书口纸页 → 压印双框
+                    → 书签带 → 首字 / 横线母题 / 版权行 → 折角 → 悬停扫光
+   全部静态绘制：没有 filter / blur / backdrop-filter / 常驻 will-change，
+   悬停只动 transform / opacity；非悬停状态不跑任何动画。 */
+.book-cover {
+  /* 默认（浅色布面 + 陶土书脊）：炭字 + 白压印 */
+  --bk-ink: #2f2a25;
+  --bk-ink-soft: rgb(47 42 37 / 0.7);
+  --bk-line: rgb(47 42 37 / 0.11);
+  --bk-line-strong: rgb(47 42 37 / 0.2);
+  --bk-emboss: rgb(47 42 37 / 0.34);
+  --bk-foil: rgb(255 255 255 / 0.62);
+  --bk-spine: #c58f6d;
+  --bk-spine-line: rgb(47 42 37 / 0.26);
+  --bk-spine-shade: rgb(47 42 37 / 0.3);
+  --bk-spine-ink: rgb(47 42 37 / 0.72);
+  --bk-band: rgb(47 42 37 / 0.28);
+  --bk-band-light: rgb(255 255 255 / 0.32);
+  --bk-page: rgb(255 255 255 / 0.5);
+  --bk-page-line: rgb(47 42 37 / 0.14);
+  --bk-fold: #fdfaf5;
+  --bk-fold-line: rgb(47 42 37 / 0.16);
+  --bk-ribbon: #c58f6d;
+  --bk-shine: rgb(255 255 255 / 0.22);
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  /* 让出书脊 1.6rem：首字 / 横线 / 版权行在剩余书面上居中 */
+  padding-left: 1.6rem;
+  background-color: #e5d8c8;
+  transform-style: preserve-3d;
+  transition: transform 0.6s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.shelf-card:hover .book-cover,
+.shelf-card:focus-within .book-cover {
+  transform: translate3d(0, -6px, 0) rotateX(4deg) rotateY(-7deg) scale(1.02);
+  box-shadow: 0 26px 50px -22px rgb(47 42 37 / 0.45);
+}
+
+/* 装帧方案（6 套，按 book.id 稳定映射）：每一套都是「布面 + 撞色布脊」——
+   书脊是一条实色竖带，封面是另一种布色，这是精装书最直白的识别特征。
+   颜色全部取自调色板（ivory / charcoal / clay / sage / sand），没有渐变；
+   深底换陶土烫金字 + 米白小字，浅底一律炭字 + 白压印。 */
+.book-cover--charcoal-clay {
+  background-color: #2f2a25;
+  --bk-ink: #c58f6d;
+  --bk-ink-soft: rgb(248 244 239 / 0.74);
+  --bk-line: rgb(248 244 239 / 0.12);
+  --bk-line-strong: rgb(248 244 239 / 0.26);
+  --bk-emboss: rgb(0 0 0 / 0.55);
+  --bk-foil: rgb(255 255 255 / 0.2);
+  --bk-spine: #c58f6d;
+  --bk-spine-line: rgb(47 42 37 / 0.3);
+  --bk-spine-shade: rgb(47 42 37 / 0.26);
+  --bk-spine-ink: rgb(47 42 37 / 0.76);
+  --bk-band: rgb(47 42 37 / 0.26);
+  --bk-band-light: rgb(255 255 255 / 0.3);
+  --bk-page: rgb(248 244 239 / 0.16);
+  --bk-page-line: rgb(248 244 239 / 0.14);
+  --bk-fold: rgb(248 244 239 / 0.2);
+  --bk-fold-line: rgb(0 0 0 / 0.4);
+  --bk-ribbon: #c58f6d;
+  --bk-shine: rgb(255 255 255 / 0.14);
+}
+
+.book-cover--clay-charcoal {
+  background-color: #c58f6d;
+  --bk-ink-soft: rgb(47 42 37 / 0.8);
+  --bk-line: rgb(47 42 37 / 0.14);
+  --bk-line-strong: rgb(47 42 37 / 0.24);
+  --bk-spine: #2f2a25;
+  --bk-spine-line: rgb(248 244 239 / 0.24);
+  --bk-spine-shade: rgb(0 0 0 / 0.35);
+  --bk-spine-ink: rgb(248 244 239 / 0.84);
+  --bk-band: rgb(0 0 0 / 0.45);
+  --bk-band-light: rgb(248 244 239 / 0.18);
+  --bk-page: rgb(255 255 255 / 0.46);
+  --bk-fold: rgb(248 244 239 / 0.85);
+  --bk-fold-line: rgb(47 42 37 / 0.22);
+  --bk-ribbon: #c9d5c6;
+}
+
+.book-cover--sage-charcoal {
+  background-color: #c9d5c6;
+  --bk-spine: #2f2a25;
+  --bk-spine-line: rgb(248 244 239 / 0.24);
+  --bk-spine-shade: rgb(0 0 0 / 0.35);
+  --bk-spine-ink: rgb(248 244 239 / 0.82);
+  --bk-fold: #fbf8f3;
+  --bk-ribbon: #c58f6d;
+}
+
+.book-cover--sand-clay {
+  background-color: #e5d8c8;
+  --bk-fold: #fdfaf5;
+}
+
+.book-cover--ivory-clay {
+  background-color: #f8f4ef;
+  border-color: rgb(47 42 37 / 0.1);
+  --bk-fold: #ffffff;
+  --bk-fold-line: rgb(47 42 37 / 0.12);
+}
+
+.book-cover--sage-clay {
+  background-color: #c9d5c6;
+  --bk-fold: #fbf8f3;
+}
+
+/* 布面书脊：竖排书名小字（装饰层，低对比，aria-hidden） */
+.book-spine {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 1.6rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--bk-spine);
+  /* 书脊右侧：1px 折缝 + 一道软阴影（静态绘制，不参与动画）→ 布面卷进书脊的圆感 */
+  box-shadow:
+    inset -1px 0 0 var(--bk-spine-line),
+    inset -9px 0 9px -9px var(--bk-spine-shade);
+  pointer-events: none;
+}
+
+/* 书脊的「竹节」：头部/尾部各一道 2px 压凸带（下沿留 1px 受光） */
+.book-spine::before,
+.book-spine::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: var(--bk-band);
+  box-shadow: 0 1px 0 var(--bk-band-light);
+}
+
+.book-spine::before {
+  top: 11%;
+}
+
+.book-spine::after {
+  bottom: 11%;
+}
+
+.book-spine-text {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  max-height: 64%;
+  overflow: hidden;
+  font-family: var(--font-serif);
+  font-size: 0.6875rem;
+  line-height: 1;
+  letter-spacing: 0.14em;
+  color: var(--bk-spine-ink);
+  white-space: nowrap;
+}
+
+/* 书口纸页：右侧一道浅纸边 + 1px 分界线 */
+.book-pages {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 0.375rem;
+  background-color: var(--bk-page);
+  box-shadow: inset 1px 0 0 var(--bk-page-line);
+  pointer-events: none;
+}
+
+/* 压印双层细框：外框 1px + 内框 1px，两道线之间留 3px 布面，像烫在布上的双线 */
+.book-frame {
+  position: absolute;
+  top: 0.6rem;
+  right: 0.6rem;
+  bottom: 0.6rem;
+  left: 2rem;
+  border: 1px solid var(--bk-line-strong);
+  border-radius: 0.22rem;
+  pointer-events: none;
+}
+
+.book-frame::after {
+  content: '';
+  position: absolute;
+  inset: 0.19rem;
+  border: 1px solid var(--bk-line);
+  border-radius: 0.14rem;
+}
+
+/* 书签带：从书脊内侧垂下来，燕尾缺口用 clip-path（不是渐变）；悬停才轻摆 */
+.book-ribbon {
+  position: absolute;
+  top: 0;
+  left: 2.65rem;
+  width: 0.45rem;
+  height: 3.4rem;
+  background-color: var(--bk-ribbon);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 82%, 0 100%);
+  transform-origin: 50% 0;
+  pointer-events: none;
+}
+
+@keyframes ribbonSway {
+  from { transform: rotate(-2.4deg); }
+  to { transform: rotate(2.4deg); }
+}
+
+.shelf-card:hover .book-ribbon {
+  animation: ribbonSway 2.8s ease-in-out infinite alternate;
+}
+
+/* 书角折页：45° 正方形只露出右下角，它的左边就是那道折线 */
+.book-fold {
+  position: absolute;
+  right: -1.15rem;
+  bottom: -1.15rem;
+  width: 2.3rem;
+  height: 2.3rem;
+  background-color: var(--bk-fold);
+  border-left: 1px solid var(--bk-fold-line);
+  transform: rotate(45deg);
+  pointer-events: none;
+}
+
+/* 首字：衬线大字，双层 text-shadow 做压印 / 烫金（不用渐变） */
+.book-letter {
+  display: block;
+  font-size: 3.75rem;
+  line-height: 0.92;
+  color: var(--bk-ink);
+  text-shadow:
+    0 1px 0 var(--bk-emboss),
+    0 -1px 0 var(--bk-foil),
+    0 3px 5px rgb(47 42 37 / 0.07);
+  /* 只过渡 transform：不做 scale（重采样会发虚），也不动 text-shadow（避免逐帧重绘） */
+  transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.shelf-card:hover .book-letter,
+.shelf-card:focus-within .book-letter {
+  transform: translate3d(0, -2px, 0);
+}
+
+/* 细分隔线母题（呼应纸质书内页的横线）：首字下方两道 1px 线 */
+.book-rule {
+  display: block;
+  width: 2.5rem;
+  height: 1px;
+  margin-top: 0.7rem;
+  background-color: var(--bk-line-strong);
+  box-shadow: 0 0.3rem 0 var(--bk-line);
+  pointer-events: none;
+}
+
+/* 版权行：细线 + 「N 词」+ 细线，像书的页脚 */
+.book-colophon {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.15rem;
+  font-size: 0.625rem;
+  line-height: 1;
+  letter-spacing: 0.16em;
+  color: var(--bk-ink-soft);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.book-colophon::before,
+.book-colophon::after {
+  content: '';
+  width: 0.9rem;
+  height: 1px;
+  background-color: var(--bk-line);
+}
+
+.book-shine {
+  position: absolute;
+  top: -30%;
+  bottom: -30%;
+  left: -40%;
+  width: 38%;
+  background-color: var(--bk-shine);
+  transform: translate3d(-170%, 0, 0) skewX(-18deg);
+  transition: transform 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+.shelf-card:hover .book-shine {
+  transform: translate3d(520%, 0, 0) skewX(-18deg);
+}
+
+.book-actions {
+  transition: opacity 0.32s ease, transform 0.32s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 桌面端悬停/键盘聚焦才显出操作按钮；移动端常显，触控区域 ≥44px */
+@media (min-width: 768px) {
+  .shelf-card .book-actions {
+    opacity: 0;
+    transform: translate3d(0, 4px, 0);
+  }
+  .shelf-card:hover .book-actions,
+  .shelf-card:focus-within .book-actions {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes shelfPulse {
+  from { transform: scale(1); opacity: 0.5; }
+  to { transform: scale(1.08); opacity: 0.85; }
+}
+
+.shelf-pulse {
+  animation: shelfPulse 3.6s ease-in-out infinite alternate;
+}
+
+@keyframes plusSpin {
+  from { transform: rotate(0deg) scale(1); }
+  to { transform: rotate(90deg) scale(1.05); }
+}
+
+.shelf-create:hover .shelf-plus {
+  animation: plusSpin 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* 虚线卡内再压一道 1px 细框，与新封面的压印框同源，网格里不割裂 */
+.shelf-create {
+  position: relative;
+}
+
+.shelf-create::before {
+  content: '';
+  position: absolute;
+  inset: 0.55rem;
+  border: 1px solid rgb(47 42 37 / 0.06);
+  border-radius: 0.85rem;
+  pointer-events: none;
+}
+
+/* ================= 环境层 =================
+   性能要点：
+   1) 三个色斑的 blur 是静态的：元素光栅化一次后作为合成层复用，动画不再逐帧重算；
+      为了让"常驻大 blur 层"绝对零成本，色斑本身不再做动画（完全静态）。
+   2) 动感交给不模糊的层：有机轮廓环超慢旋转、漂浮字形漂移 —— 只有 transform/opacity。
+   3) 容器 contain: layout paint style，绘制与页面其它部分隔离。
+   移动端不再隐藏色斑，只缩小尺寸与模糊半径。 */
+
+/* 环境层是整屏固定底图：position/inset/z-index 写在 CSS 里而不是靠工具类，
+   保证不依赖 class 顺序；组件本身 portal 到 <body>，没有祖先能把它"捕获"
+   成相对某个 transform/filter/contain 容器定位（否则会跟着内容滚）。 */
+.ambient-stage {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  /* clip 而不是 hidden：不创建滚动容器，只裁剪绘制 */
+  overflow: clip;
+  contain: layout paint style;
+  /* 提升为独立合成层：移动端合成/滚动时不会被重新光栅化或跟着位移。
+     注意 transform 加在 fixed 元素自身，只影响它的子元素，不会改变它自己的包含块。 */
+  transform: translateZ(0);
+  backface-visibility: hidden;
+}
+
+.ambient-orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(44px);
+  transform: translate3d(0, 0, 0);
+  backface-visibility: hidden;
+}
+
+.ambient-orb-a { width: 17rem; height: 17rem; left: -7rem; top: 4rem; }
+.ambient-orb-b { width: 14rem; height: 14rem; right: -5rem; top: 22rem; }
+.ambient-orb-c { width: 16rem; height: 16rem; left: 16%; bottom: -6rem; }
+
+@media (min-width: 768px) {
+  .ambient-orb { filter: blur(72px); }
+  .ambient-orb-a { width: 22rem; height: 22rem; left: -8rem; top: 6rem; }
+  .ambient-orb-b { width: 18rem; height: 18rem; right: -6rem; top: 28rem; }
+  .ambient-orb-c { width: 20rem; height: 20rem; left: 20%; bottom: -8rem; }
+}
+
+@keyframes haloSpin {
+  from { transform: rotate(0deg) scale(1); }
+  to { transform: rotate(360deg) scale(1.05); }
+}
+
+.ambient-halo {
+  position: absolute;
+  border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%;
+  border: 1px solid rgb(197 143 109 / 0.2);
+  transform: translate3d(0, 0, 0);
+  animation: haloSpin 78s linear infinite;
+}
+
+.ambient-halo-a { width: 26rem; height: 26rem; right: -9rem; top: -7rem; }
+.ambient-halo-b {
+  width: 20rem;
+  height: 20rem;
+  left: -7rem;
+  bottom: 3rem;
+  border-color: rgb(47 42 37 / 0.09);
+  animation-duration: 104s;
+  animation-direction: reverse;
+}
+
+@media (min-width: 768px) {
+  .ambient-halo-a { width: 34rem; height: 34rem; right: -8rem; top: -10rem; }
+  .ambient-halo-b { width: 26rem; height: 26rem; left: -8rem; bottom: 4rem; }
+}
+
+@keyframes glyphDrift {
+  from {
+    transform: translate3d(0, 0, 0) rotate(var(--glyph-rot, 0deg));
+    opacity: var(--glyph-op, 0.4);
+  }
+  to {
+    transform: translate3d(var(--glyph-dx, 16px), var(--glyph-dy, -24px), 0) rotate(calc(var(--glyph-rot, 0deg) + 10deg));
+    opacity: calc(var(--glyph-op, 0.4) + 0.16);
+  }
+}
+
+.ambient-glyph {
+  position: absolute;
+  font-family: var(--font-serif);
+  line-height: 1;
+  color: rgb(197 143 109 / 0.5);
+  transform: translate3d(0, 0, 0) rotate(var(--glyph-rot, 0deg));
+  animation: glyphDrift var(--glyph-dur, 26s) ease-in-out infinite alternate;
+  animation-delay: var(--glyph-delay, 0s);
+}
+
+/* 移动端：视觉保留，但不再常驻播放（省电、零合成开销） */
+@media (max-width: 767px) {
+  .ambient-halo,
+  .ambient-glyph {
+    animation: none;
+  }
+}
+
+
+/* ================= 页面切换：View Transitions =================
+   防"发白/双重曝光"的总原则：同一时刻不能有两层都半透明。
+   - 新画面：opacity 恒 1，只动 transform（下面是旧画面，不会露白）；
+   - 旧画面：淡出，但下面始终压着完全不透明的新画面。 */
+
+.vt-home { view-transition-name: home-content; }
+
+/* 注意：**不要**给 .vt-home 加转场期间的整屏不透明底色。
+   旧首页快照已经由 ::view-transition-old(home-content) { opacity: 0 } 整片隐藏，
+   不存在"透出来叠影"的问题；而底色是画在**新**首页快照上的 —— 一旦加上，
+   分区切换 / 从书页返回的 0.5s 里会把环境背景整片盖住，转场结束再"啪"地冒出来。
+   环境层（.ambient-stage）现在挂在 App 壳层、属于 root 快照：它是常驻的静止底图，
+   页面快照必须保持透明，背景才能全程连续。 */
+.vt-detail { view-transition-name: detail-page; }
+
+/* —— 顶部标题栏：首页导航与书页导航各自独立命名 ——
+   两栏内容完全不同（品牌 + 分区 ／ 返回 + 书名 + 操作），共用同一个名字只会让浏览器
+   把两种内容在同一个盒子里做几何形变 + 硬切换：实测两条栏的盒子几乎重合，
+   group 的 transform 全程是 identity，old 立刻 opacity:0、new 立刻 opacity:1，
+   读起来就是"标题栏凭空消失 / 凭空出现"，没有任何动画。
+   拆成两个名字后，各自负责退场与入场（见下面的 navBarOut / navBarIn），
+   同一时刻只可能有一栏在画（旧的已经淡出到底，新的才起步），不会出现两条半透明导航叠着。 */
+.vt-nav-home { view-transition-name: app-nav-home; }
+.vt-nav-book { view-transition-name: app-nav-book; }
+
+@keyframes navBarOut {
+  from { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  to { opacity: 0; transform: translate3d(0, -16px, 0) scale(0.985); }
+}
+
+/* 新栏从视口顶边外侧落位：0.08s 起步（旧栏 0.2s 已淡出大半），避免两条栏叠着看 */
+@keyframes navBarIn {
+  from { opacity: 0; transform: translate3d(0, -20px, 0) scale(0.985); }
+  55% { opacity: 1; }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+}
+
+/* 同页变化（分区切换 / 纸质↔列表）：导航原地不动，旧快照隐藏、新快照直接显示，
+   几何形变交给 group（两条栏盒子一样，等于不动）—— 不能让它淡出淡入。 */
+::view-transition-old(app-nav-home),
+::view-transition-old(app-nav-book) {
+  animation: none;
+  opacity: 0;
+}
+
+::view-transition-new(app-nav-home),
+::view-transition-new(app-nav-book) {
+  animation: none;
+  opacity: 1;
+}
+
+/* 整页切换（html.vt-nav-motion：首页 ↔ 书页、全屏详情进出）：旧栏上浮淡出、新栏从顶边落位。
+   注意选择器写法：必须是**复合**（html.vt-nav-motion::view-transition-…），
+   写成后代选择器（html.vt-nav-motion ::view-transition-…）不会匹配 ——
+   转场伪树挂在根元素上，只有复合选择器能带上根元素的条件类。 */
+html.vt-nav-motion::view-transition-old(app-nav-home),
+html.vt-nav-motion::view-transition-old(app-nav-book) {
+  animation: navBarOut 0.2s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+html.vt-nav-motion::view-transition-new(app-nav-home),
+html.vt-nav-motion::view-transition-new(app-nav-book) {
+  animation: navBarIn 0.46s cubic-bezier(0.16, 1, 0.3, 1) 0.08s both;
+}
+
+/* 抬到首页/书页快照之上：首页快照在转场期间整屏不透明，导航必须画在它上面。
+   两个名字都只在一侧树里存在（首页导航 / 书页导航二选一渲染），所以 group 没有几何插值，
+   只保留 UA 的定位动画 —— 不要写 animation: none，那会把快照的盒子尺寸一起清掉。 */
+::view-transition-group(app-nav-home),
+::view-transition-group(app-nav-book) {
+  z-index: 3;
+  animation-duration: 0.4s;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* 共享元素（单词）：frontend-dict 给词元素加 .vt-word */
+/* 共享元素盒子必须贴合文字：
+   列表行里的词是 block 撑满整行（586px），详情标题是贴合文字的 157px；
+   不收紧的话，共享元素会从"整行宽"横向挤到标题宽，飞行中文字被横向拉伸变形。 */
+.vt-word {
+  view-transition-class: word;
+  width: fit-content;
+  max-width: 100%;
+}
+
+/* 转场期间把元素自带的进场动画"快进到终态"：
+   不写 animation: none（那会在转场结束后从 0 补播 → 二次入场闪一下），
+   而是把时长压到 0.001s、延迟清零，同时用 !important 覆盖最终值 ——
+   快照拍到的是终态（不会拍到"还没入场的空页面"），settle 时动画早已 finished，
+   撤销覆盖也不会回跳。
+   作用域只有 vt-running（转场进行中）：转场结束后才挂载的内容
+   （异步数据、弹窗、列表项）照常播放入场动画，不会被永久压制。 */
+html.vt-running :is(
+  .animate-hero-in,
+  .animate-detail-in,
+  .animate-page-in,
+  .animate-result-in,
+  .animate-step-in,
+  .animate-fade-in,
+  .animate-fade-in-up,
+  .animate-bar-down,
+  .animate-nav-in,
+  .animate-book-rise,
+  .animate-word-rise
+) {
+  animation-duration: 0.001s !important;
+  animation-delay: 0s !important;
+  opacity: 1 !important;
+  transform: none !important;
+}
+
+/* 环境层在转场期间暂停：快照本来就是静止的，暂停省掉每帧的合成器 tick，
+   也避免 settle 时"恢复播放"和快照错位。 */
+html.vt-running :is(.ambient-orb-a, .ambient-orb-b, .ambient-orb-c, .ambient-halo, .ambient-glyph) {
+  animation-play-state: paused;
+}
+
+/* root 快照（页面底色 + 环境层）：不做默认的 250ms 交叉淡入。
+   默认是 plus-lighter 混合，两层半透明相加会把整屏提亮发白，而且每帧多一层全屏合成。
+   让 root 恒为新画面的不透明快照，方向感交给 home-content / detail-page 的位移动画。 */
+::view-transition-old(root) {
+  animation: none;
+  opacity: 0;
+}
+
+::view-transition-new(root) {
+  animation: none;
+  opacity: 1;
+}
+
+/* 新画面：只动 transform，opacity 恒 1 —— 杜绝"两边都半透明"的发白 */
+@keyframes vtNewIn {
+  from { transform: translate3d(0, 26px, 0) scale(0.985); }
+  to { transform: translate3d(0, 0, 0) scale(1); }
+}
+
+/* 旧画面：淡出（下面已是不透明的新画面，不会露白）。
+   关闭详情时这条负责"收回"：只做 translateY 收口、不透明度快速到 0，
+   不做 scale —— 缩放会让整屏快照和下面的内容错位，看起来像"重影"。 */
+@keyframes vtOldOut {
+  from { opacity: 1; transform: translate3d(0, 0, 0); }
+  to { opacity: 0; transform: translate3d(0, -22px, 0); }
+}
+
+/* 旧首页：0.16s 快速淡出。首页容器本身没有背景，长时间半透明会和"新内容"
+   叠成双重曝光；它下面永远压着不透明的 root 快照（象牙白页面底），淡到 0 不会露白。 */
+@keyframes vtHomeOut {
+  from { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  to { opacity: 0; transform: translate3d(0, -14px, 0) scale(1.01); }
+}
+
+/* 离开的首页快照直接隐藏，不做淡出：
+   .vt-home 自身透明，淡出过程中会把"新页面"从透明缝里透出来，
+   和首页文字叠成双重曝光（P0）。方向感由新页面的 vtNewIn 位移 + 共享词飞行提供，
+   实测 settle 后无二次入场（新页面动画在 vt-running 期间已快进到终态）。 */
+::view-transition-old(home-content) {
+  animation: none;
+  opacity: 0;
+}
+/* 分区切换（tab）：旧快照已隐藏，新快照恒不透明、只做 transform 方向，
+   绝不做交叉淡入 —— 两个分区同帧半透明就会"叠印"。 */
+::view-transition-new(home-content) {
+  animation: vtNewIn 0.44s cubic-bezier(0.16, 1, 0.3, 1) both;
+  opacity: 1;
+}
+::view-transition-old(detail-page) {
+  /* 退场 0.26s：0.16s 太急，整页像被"啪"地抽走；现在是向上收 + 淡出，收得住也看得清 */
+  animation: vtOldOut 0.26s cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+/* 单词书页（WordbookDetail 根，dict 挂 .vt-book-page）：独立命名，
+   不再靠 root 交叉淡入 —— 书架↔书页双向都只动 transform，不会两页叠着看。 */
+.vt-book-page {
+  view-transition-name: book-page;
+}
+
+/* 书页分组抬到首页快照之上：首页是"旧树独有"的分组，默认绘制顺序会压在书页上面，
+   那 0.16s 的淡出就会和书页文字叠着看（双重曝光）。抬到 z-index:1 后，
+   首页在书页背后淡出 —— 视觉上就是"书页盖上来"。 */
+::view-transition-group(book-page) {
+  z-index: 1;
+}
+
+::view-transition-group(detail-page) {
+  z-index: 1;
+}
+
+::view-transition-new(book-page) {
+  animation: vtNewIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  opacity: 1;
+}
+
+::view-transition-old(book-page) {
+  animation: vtOldOut 0.16s cubic-bezier(0.4, 0, 0.6, 1) both;
+}
+
+/* 详情页：以顶边为原点放大，顶边始终贴住 y=0 —— 顶部不会露出下面那层导航
+   （旧版从 +26px 上滑，顶部 26px 会露出导航，看起来像"两层顶栏"）。
+   底部与两侧略微内收，读作"页面展开铺满"。 */
+/* 详情页铺满：0.955 → 1（原来 0.965 几乎看不出在动；再深就会在两侧露出后面的列表），
+   配合 0.6s 长尾曲线，读作「整页从远处推到你面前」；transform-origin 在顶边，顶部不会露底。 */
+@keyframes vtDetailIn {
+  from { transform: scale(0.955); }
+  to { transform: scale(1); }
+}
+
+/* 页面 0.55s 先铺满并停住，词 0.8s 最后落位 —— 收尾那 0.25s 画面上只有词在动，
+   这是「丝滑」的关键：两段运动不并排跑到最后，视线不会被两条同时减速的轨迹撕开。 */
+::view-transition-new(detail-page) {
+  transform-origin: 50% 0;
+  animation: vtDetailIn 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+
+/* 共享词飞行：0.62s + 长尾 expo-out（cubic-bezier(0.16, 1, 0.3, 1)）。
+   · 原来 0.42s + 过冲曲线（1.2）：先冲过头再回弹，读起来是"弹一下"，不是"滑过去"；
+     而且它在页面落定（0.52s）之前就停了，两段动作分成两拍。
+   · 现在曲线不过冲、时长比页面略长：页面先铺满，词最后轻轻落到标题位，
+     整段是一个连续手势 —— 越到后面越慢，收尾"丝滑"。 */
+/* 词的运动曲线用 linear() 手写成「快接近 + 超长收尾」：
+   0→86% 的距离在前 38% 走完，剩下 62% 的时间只走最后 14% ——
+   cubic-bezier 的尾巴再长也会在 ~60% 就停住，这里是真的「一点点蹭到位」，
+   读起来才像有质量的滑动，而不是匀速停下。全程单调、不过冲。 */
+::view-transition-group(.word) {
+  animation-duration: 0.85s;
+  animation-timing-function: linear(
+    0,
+    0.06 2%,
+    0.17 5%,
+    0.31 9%,
+    0.47 14%,
+    0.62 20%,
+    0.74 26%,
+    0.83 32%,
+    0.885 38%,
+    0.92 45%,
+    0.945 53%,
+    0.963 62%,
+    0.976 71%,
+    0.986 80%,
+    0.993 88%,
+    0.998 95%,
+    1
+  );
+  overflow: visible;
+  /* 关键：共享词必须画在所有整屏快照**之上**，层级严格递增：
+     detail-page / book-page = 1 < .word = 4 < toast = 6。
+     · 与 detail-page 打平（曾经都是 1）时按文档顺序（portal 在后）→ 详情页盖住共享词 = 飞行消失；
+     · 低于导航分组（3）时，落点在详情标题（手机 y≈96）会被导航快照压住 = 末段钻到胶囊后面消失。
+     取 4 而不是 2：导航快照的高度在手机上盖过标题行，只有压过它才能保证全程可见。 */
+  z-index: 4;
+}
+
+/* 旧快照直接隐藏、新快照恒不透明：飞行途中只有一层完全不透明的文字，
+   既不会"颜色变淡再恢复"，也不会出现列表里其它词的残影。 */
+::view-transition-old(.word) {
+  animation: none;
+  opacity: 0;
+}
+
+/* 共享词新快照：只跟着 group 的几何插值飞行（位置 + 尺寸 78×28 → 157×45），
+   不再叠额外的 scale 弧线 —— 弧线与 group 的尺寸插值叠加会让词在中途"鼓一下再缩回"，
+   看起来像动画坏了。也不加 filter: drop-shadow：飞行中 group 盒子每帧在变，
+   带 filter 的图层要逐帧重新栅格化（模糊 + 掉帧）。 */
+::view-transition-new(.word) {
+  animation: none;
+  opacity: 1;
+}
+
+
+/* 轻提示退场：2.4s 停留结束后淡出下沉 8px，200ms 后才从 DOM 摘掉 */
+.vt-toast[data-state='closing'] {
+  animation: toastOut 0.2s cubic-bezier(0.4, 0, 1, 1) both;
+}
+
+@keyframes toastOut {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
+/* 轻提示：单独命名 + 抬到转场伪树最上层。
+   否则关闭详情的转场里，toast 在 .vt-home 之外，会被整屏的 detail-page 快照压住。 */
+.vt-toast {
+  view-transition-name: toast;
+}
+
+::view-transition-group(toast) {
+  animation: none;
+  z-index: 6;
+}
+
+::view-transition-old(toast) {
+  animation: none;
+  opacity: 0;
+}
+
+::view-transition-new(toast) {
+  animation: none;
+  opacity: 1;
+}
+
+/* 详情底栏：**不单独命名**。
+   只要它带 view-transition-name，浏览器就会把它从页面快照里摘出来单独做一层 ——
+   打开详情时这一层会先缺位、随后才落位，读起来就是「进去一瞬间没有底栏，然后突然出现」。
+   现在它属于页面快照的一部分，跟着页面一起淡入/落位，任何时刻都不会单独消失。 */
+
+
+
+/* 弹窗：从"更远一点"的位置柔和落位。
+   原来的 scale(0.94) + 0.38s 是"啪一下弹出来"（用户：弹窗很突兀）：
+   缩放幅度大、时间短、起点没有留白感。现在位移更小、时间更长、曲线收尾更慢，
+   读起来是"一张纸从桌上被推到面前"，而不是"弹窗蹦出来"。 */
 @keyframes popIn {
-  from { opacity: 0; transform: scale(0.94) translateY(10px); }
-  to { opacity: 1; transform: scale(1) translateY(0); }
+  from { opacity: 0; transform: translate3d(0, 22px, 0) scale(0.978); }
+  60% { opacity: 1; }
+  to { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
 }
 .animate-pop-in {
-  animation: popIn 0.38s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  animation: popIn 0.46s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* 页面形态的表单/清单（添加单词、管理标签）：整张纸面从下方轻轻推上来，
+   不是"弹窗蹦出来"——它本来就是一整页。 */
+@keyframes pageIn {
+  from { opacity: 0; transform: translate3d(0, 16px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
+}
+.animate-page-in {
+  animation: pageIn 0.34s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
 /* 单词行浮现（进入页面时逐行淡入） */
 @keyframes wordRise {
-  from { opacity: 0; transform: translateY(7px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0; transform: translate3d(0, 7px, 0); }
+  to { opacity: 1; transform: translate3d(0, 0, 0); }
 }
 .animate-word-rise {
   animation: wordRise 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
 }
 
-/* ============ 3D 仿真翻书 ============
-   以左缘为轴（transform-origin: left center），配合双面渲染（backface）
-   翻下一页：旧页向左翻起越过左缘（背面朝外），新页从右侧立起落下 */
-@keyframes flipOutNext {
-  from { transform: rotateY(0deg); box-shadow: 0 8px 24px rgb(47 42 37 / 0.06); }
-  45% { box-shadow: 26px 30px 70px rgb(47 42 37 / 0.2); }
-  to { transform: rotateY(-172deg); box-shadow: 26px 30px 70px rgb(47 42 37 / 0.2); }
-}
-@keyframes flipOutPrev {
-  from { transform: rotateY(0deg); box-shadow: 0 8px 24px rgb(47 42 37 / 0.06); }
-  45% { box-shadow: -26px 30px 70px rgb(47 42 37 / 0.2); }
-  to { transform: rotateY(172deg); box-shadow: -26px 30px 70px rgb(47 42 37 / 0.2); }
-}
-@keyframes flipInNext {
-  from { transform: rotateY(-105deg); box-shadow: 26px 30px 70px rgb(47 42 37 / 0.2); }
-  to { transform: rotateY(0deg); box-shadow: 0 8px 24px rgb(47 42 37 / 0.06); }
-}
-@keyframes flipInPrev {
-  from { transform: rotateY(105deg); box-shadow: -26px 30px 70px rgb(47 42 37 / 0.2); }
-  to { transform: rotateY(0deg); box-shadow: 0 8px 24px rgb(47 42 37 / 0.06); }
-}
-.page-flip-out-next {
-  animation: flipOutNext 0.34s cubic-bezier(0.3, 0, 0.3, 1) both;
-  transform-origin: left center;
-}
-.page-flip-out-prev {
-  animation: flipOutPrev 0.34s cubic-bezier(0.3, 0, 0.3, 1) both;
-  transform-origin: left center;
-}
-.page-flip-in-next {
-  animation: flipInNext 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  transform-origin: left center;
-}
-.page-flip-in-prev {
-  animation: flipInPrev 0.45s cubic-bezier(0.2, 0.8, 0.2, 1) both;
-  transform-origin: left center;
+/* ================= 弹窗关闭动画 =================
+   组件在 closing 状态给遮罩 / 面板分别加 .modal-exit-overlay / .modal-exit，
+   等 animationend（或 ≥240ms 兜底）再卸载。纯 CSS，只动 transform / opacity。
+   - 遮罩：180ms 淡出
+   - 面板：220ms 缩小到 .97 + 下移 8px + 淡出（加速曲线，读作"收回去"）
+   关闭过程中 pointer-events: none，避免残余点击穿透到正在退场的按钮。 */
+
+@keyframes overlayOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
-/* 翻页拟真（旧版平移式，已由 3D 翻书替代） */
+@keyframes panelOut {
+  from { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  to { opacity: 0; transform: translate3d(0, 14px, 0) scale(0.985); }
+}
+
+.modal-exit-overlay {
+  animation: overlayOut 0.18s cubic-bezier(0.4, 0, 1, 1) both;
+  pointer-events: none;
+}
+
+.modal-exit {
+  animation: panelOut 0.22s cubic-bezier(0.32, 0, 0.67, 0) both;
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
+  /* 新加的入场/退场/展开同样降级：不留「还在原地」的 180–280ms 空窗 */
+  .ui-pop[data-state='closing'],
+  .vt-toast[data-state='closing'] {
+    animation: none;
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  .collapse {
+    transition: none;
+  }
+
+  /* 转场伪树的快照动画同样要降级：整页缩放 + 共享词飞行对前庭敏感人群不友好 */
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 0.01s !important;
+    animation-delay: 0s !important;
+  }
+
+  .animate-hero-in,
+  .animate-detail-in,
+  .animate-page-in,
+  .animate-step-in,
+  .animate-result-in,
+  .animate-bar-down,
   .animate-fade-in-up,
   .animate-fade-in,
   .animate-pop-in,
+  .animate-page-in,
+  .modal-exit,
+  .modal-exit-overlay,
   .animate-word-rise,
-  .page-flip-out-next,
-  .page-flip-out-prev,
-  .page-flip-in-next,
-  .page-flip-in-prev {
+  .animate-nav-in,
+  .animate-book-rise,
+  .animate-pulse,
+  .animate-spin,
+  .animate-bounce,
+  .animate-ping {
     animation: none;
+  }
+  .ambient-halo,
+  .ambient-glyph,
+  .book-ribbon,
+  .shelf-pulse {
+    animation: none;
+  }
+  /* 悬停动作全部瞬时到位（首字轻抬 / 封面 3D 抬起不再缓动） */
+  .book-letter,
+  .book-cover {
+    transition: none;
   }
   [class*="transition-all"] {
     transition: none;
   }
-  /* 视图切换过渡同样关闭 */
+  /* 视图切换过渡同样关闭（含共享词与各分组） */
   ::view-transition-old(root),
-  ::view-transition-new(root) {
+  ::view-transition-new(root),
+  ::view-transition-old(*),
+  ::view-transition-new(*),
+  ::view-transition-group(*) {
     animation: none !important;
   }
 }
 
-/* 基础色：暖米白底 + 深炭文字 */
+/* transition-all 会把 box-shadow / filter 也拖进过渡（阴影重绘很贵）。
+   统一收窄成合成友好的属性集；组件若需更细的过渡可自行覆盖。 */
+[class*="transition-all"] {
+  transition-property: transform, translate, scale, rotate, opacity, color, background-color, border-color, text-decoration-color;
+}
+
+/* ================= 纸质书覆盖态（静态纸雾） =================
+   原来每个被遮住的词都是一个 `filter: blur(6px)` 图层：一屏几十个合成层，
+   每帧都要合成/栅格化，是纸质书滚动掉到 30fps 的主因。
+   换成"文字透明 + 静态高斯阴影"：外观同样是看不清的雾字，但它是**绘制期**效果，
+   没有 filter 图层、没有 mask、没有常驻 will-change，滚动时零额外合成成本。 */
+.paper-veil {
+  /* 不用 opacity：opacity < 1 会给每个雾字建一个 stacking context（一屏几十个）
+     并强制单独合成。透明度直接并进阴影颜色（0.5 × 0.65 ≈ 0.33），观感等价。 */
+  color: transparent !important;
+  text-shadow: 0 0 7px rgb(47 42 37 / 0.33);
+  transition: text-shadow 0.2s ease-out;
+  user-select: none;
+}
+
+/* ================= 安全区 / 导航高度变量 =================
+   iPhone 刘海屏：env(safe-area-inset-top) > 0，导航整体下移，内容区上边距必须跟着变，
+   不能写死 pt-40（160px）——实测刘海机上导航底边 186px，写死 160 会重叠 26px。 */
+:root {
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* 手机两行导航（品牌行 + 分段行）实测 142~147px；桌面单行 84px */
+  --nav-h: 9.25rem;
+  --nav-gap: 0.75rem;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --nav-h: 5.5rem;
+  }
+}
+
+/* 内容区上边距：导航高度 + 安全区 + 余量（给页面 main 用，替代写死的 pt-40 md:pt-28） */
+.pt-safe-nav {
+  padding-top: calc(var(--nav-h) + var(--safe-top) + var(--nav-gap));
+}
+
+/* 贴底元素避让：toast / 详情底栏 / 弹窗页脚 */
+.pb-safe {
+  padding-bottom: calc(var(--safe-bottom) + 0.5rem);
+}
+
+.bottom-safe {
+  bottom: calc(1.5rem + var(--safe-bottom));
+}
+
+/* 导航自身：刘海屏下整体下移，胶囊不会被状态栏压住。
+   用 nav.home-nav 提高特异性，压过后面 .home-nav 的基础样式（与顺序无关）。 */
+nav.home-nav {
+  padding-top: calc(0.75rem + var(--safe-top));
+}
+
+/* 基础色：暖米白底 + 深炭文字
+   注意：不设全局 scroll-behavior: smooth —— 详情切步骤的 scrollTo(0) 会被它变成
+   "平滑回弹"，需要滚动的个别位置自己传 behavior。 */
+
+/* 纵向：保留系统手势与 iOS 下拉回弹（用户明确要求，不能禁）。
+   背景层靠 portal + position: fixed 自己钉住，不靠禁用回弹来"修"位移。
+   横向：仍然 none —— 避免左右滑动触发浏览器前进/后退。 */
 html {
-  scroll-behavior: smooth;
+  overscroll-behavior-y: auto;
+  overscroll-behavior-x: none;
 }
 
 body {
   background-color: #f8f4ef;
   color: #2f2a25;
+  overscroll-behavior-y: auto;
+  overscroll-behavior-x: none;
 }
 
-/* 全局焦点环：陶土棕 */
-*:focus-visible {
+/* 全屏详情页：与全局同一套规则（都允许纵向回弹），
+   只保留 contain 防止"滚到底继续带动背后页面"的链式滚动。 */
+.vt-detail {
+  overscroll-behavior-y: auto;
+  overscroll-behavior-x: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* 全局焦点环：陶土棕，键盘可见、鼠标不打扰 */
+/* 全局焦点环只作用于"非表单控件"：表单控件另有一条内嵌圆角环，
+   否则会出现两层（外层 4px offset 的方角环 + 内层贴合环）。 */
+*:focus-visible:not(input):not(textarea):not(select):not([contenteditable]) {
   outline: 2px solid #c58f6d;
   outline-offset: 4px;
+}
+
+/* 表单控件：焦点环画在圆角内侧，颜色用陶土棕。
+   **不要写 border-radius: inherit** —— 输入框的父级是普通 div（圆角 0），
+   inherit 会把输入框自己的 rounded-xl 顶成 0，聚焦时整块变成方角硬框（实测 radius 0px）。
+   outline 本来就会跟随元素自身的圆角，不需要额外指定。 */
+/* 下划线字段（工作台的词头）：焦点只把线变成陶土色，不画整圈光晕 */
+input.field-underline:focus-visible,
+textarea.field-underline:focus-visible {
+  outline: none;
+  border-color: rgb(197 143 109 / 0.9);
+  border-bottom-width: 2px;
+  box-shadow: none;
+}
+
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+[contenteditable]:focus-visible {
+  /* 2px 实心橙框在圆角大输入框上显得很硬（用户：丑）。改成「描边变陶土 + 一圈很淡的光晕」，
+     键盘可见性不减，视觉上柔很多。 */
+  outline: none;
+  border-color: rgb(197 143 109 / 0.85);
+  box-shadow: 0 0 0 4px rgb(197 143 109 / 0.13);
+}
+
+button:focus-visible,
+a:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid #c58f6d;
+  outline-offset: 3px;
 }
 
 /* 轻颗粒覆盖层（Texture Overlay） */
@@ -130,26 +1427,15 @@ body {
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.04'/%3E%3C/svg%3E");
 }
 
-/* 有机形状 */
-.blob-shape {
-  border-radius: 60% 40% 30% 70% / 60% 30% 70% 40%;
-}
-
-/* 卡片悬浮：上浮 + 轻阴影 */
-.card-hover {
-  transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
-}
-.card-hover:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 12px 32px rgb(47 42 37 / 0.1);
-}
-
 /* —— iOS 刘海屏适配（standalone 添加到主屏幕，viewport-fit=cover）——
    顶部悬浮导航让出状态栏；底部让出 Home Indicator。非刘海设备 env()=0，无影响。 */
 @supports (padding-top: env(safe-area-inset-top)) {
-  /* 覆盖 .py-4 的顶部内边距：取 py-4（1rem）与安全区的较大值 */
   nav.fixed {
     padding-top: max(1rem, env(safe-area-inset-top));
+  }
+  /* 主页导航：更紧凑，保证 390x844 下不压住内容（main 顶部预留 10rem） */
+  nav.home-nav.fixed {
+    padding-top: max(0.75rem, env(safe-area-inset-top));
   }
   body {
     padding-bottom: env(safe-area-inset-bottom);

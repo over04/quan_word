@@ -8,6 +8,8 @@ interface Props {
   /** 任一操作后的更新函数（函数式更新，连续操作按序应用不互相覆盖） */
   onChange: (updater: (prev: TagFilter) => TagFilter) => void
   onClose: () => void
+  /** 正在播退场（usePresence）：只影响样式，不影响行为 */
+  closing?: boolean
 }
 
 type Link = 'and' | 'or'
@@ -125,7 +127,7 @@ function GroupCard({
             aria-pressed={group.ids.includes(t.id)}
             aria-disabled={group.mode === 'none'}
             tabIndex={group.mode === 'none' ? -1 : 0}
-            className={`px-2.5 py-1 rounded-full text-xs border transition-colors ${
+            className={`min-h-11 px-3 rounded-full text-xs border transition-colors active:scale-95 ${
               group.mode === 'none'
                 ? 'border-charcoal/10 text-charcoal/30 cursor-not-allowed'
                 : group.ids.includes(t.id)
@@ -144,7 +146,7 @@ function GroupCard({
 /** 标签筛选面板：平铺条件组编辑（组内 and/or/none，组间且/或连接）。
  *  优先级（「且」优先于「或」）用分段视觉直观体现：按「或」把组切成段，
  *  段容器用边框/背景包裹（括号感），段间「或」为醒目大按钮，段内「且」为小按钮。 */
-export default function TagFilterPanel({ tags, filter, onChange, onClose }: Props) {
+export default function TagFilterPanel({ tags, filter, onChange, onClose, closing }: Props) {
   // 净化后仍有有效条件（含无标签组）即视为筛选生效；「全部单词」仅在真正无筛选时高亮
   const isEmpty = sanitizeTagFilter(filter).groups.length === 0
   // 按「或」链接切段：每段 = 组索引数组（段内连接词全为且）
@@ -160,12 +162,15 @@ export default function TagFilterPanel({ tags, filter, onChange, onClose }: Prop
   if (cur.length > 0) segments.push(cur)
 
   return (
-    <div className="absolute right-0 top-12 z-50 w-72 max-w-[calc(100vw-2rem)] max-h-96 overflow-y-auto bg-white rounded-2xl border border-charcoal/10 shadow-xl shadow-charcoal/10 p-4 animate-fade-in-up">
+    <div
+      data-state={closing ? 'closing' : 'open'}
+      className="ui-pop absolute right-0 top-12 z-50 w-72 max-w-[calc(100vw-2rem)] max-h-96 overflow-y-auto bg-white rounded-2xl border border-charcoal/10 shadow-xl shadow-charcoal/10 p-4 animate-fade-in-up"
+    >
       <div className="flex items-center justify-between">
         <p className="font-serif text-base text-charcoal">按标签筛选</p>
         <button
           onClick={onClose}
-          className="w-7 h-7 rounded-full text-charcoal/40 hover:bg-sand/40 hover:text-charcoal transition-colors"
+          className="w-11 h-11 -mr-2 rounded-full text-charcoal/40 hover:bg-sand/40 hover:text-charcoal active:scale-95 transition-all"
           aria-label="关闭筛选"
         >
           ✕
@@ -181,7 +186,7 @@ export default function TagFilterPanel({ tags, filter, onChange, onClose }: Prop
                 <button
                   key={t.id}
                   onClick={() => onChange((prev) => toggleGroupTag(prev, 0, t.id))}
-                  className="px-2.5 py-1 rounded-full text-xs border border-charcoal/15 text-charcoal/70 hover:bg-sand/60 transition-colors"
+                  className="min-h-11 px-3 rounded-full text-xs border border-charcoal/15 text-charcoal/70 hover:bg-sand/60 active:scale-95 transition-all"
                 >
                   {t.name}
                 </button>
@@ -230,7 +235,7 @@ export default function TagFilterPanel({ tags, filter, onChange, onClose }: Prop
       </div>
       <button
         onClick={() => onChange(addGroup)}
-        className="mt-3 w-full py-2 rounded-xl border border-dashed border-charcoal/25 text-sm text-charcoal/60 hover:border-charcoal/50 hover:text-charcoal transition-colors"
+        className="mt-3 w-full min-h-11 rounded-xl border border-dashed border-charcoal/25 text-sm text-charcoal/60 hover:border-charcoal/50 hover:text-charcoal active:scale-[0.99] transition-all"
       >
         + 添加条件组
       </button>
@@ -238,7 +243,7 @@ export default function TagFilterPanel({ tags, filter, onChange, onClose }: Prop
         <button
           onClick={() => onChange(() => ({ groups: [], links: [] }))}
           aria-pressed={isEmpty}
-          className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-sm transition-colors ${
+          className={`w-full min-h-11 flex items-center justify-between px-3 rounded-xl text-sm transition-colors ${
             isEmpty ? 'bg-charcoal text-ivory' : 'text-charcoal/70 hover:bg-sand/40'
           }`}
         >

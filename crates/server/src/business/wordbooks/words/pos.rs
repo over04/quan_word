@@ -1,11 +1,11 @@
-use strum::EnumString;
+use strum::{Display, EnumString};
 
 /// 词性白名单（21 种书写形式 → 18 个语义变体；c/C、u/U、cu/CU 各为同义书写）。
 ///
 /// 与前端词性下拉一致；校验时对释义 `pos` 字段 `trim` 后匹配，留空合法
 /// （空值判断在调用方提前处理）。映射由 `strum::EnumString` 声明，业务层
 /// 不再维护字符串白名单数组。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, EnumString, Display)]
 pub enum WordPos {
     #[strum(serialize = "n.")]
     N,

@@ -47,17 +47,20 @@ mod tests {
     use tower::ServiceExt;
 
     use super::require_api_key;
+    use crate::business::dict::state::DictState;
     use crate::common::state::AppState;
     use crate::config::Config;
 
     async fn state_with(key: Option<&str>) -> AppState {
+        let config = Config::default();
         AppState {
             db: Arc::new(Database::connect("sqlite::memory:").await.unwrap()),
             api_key: key.map(Arc::from),
             wordbooks_cache: Arc::new(parking_lot::Mutex::new(None)),
             shuffle_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
             import_cache: Arc::new(parking_lot::Mutex::new(HashMap::new())),
-            config: Config::default(),
+            dict: Arc::new(DictState::new(&config.dict)),
+            config,
         }
     }
 

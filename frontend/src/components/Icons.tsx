@@ -36,6 +36,24 @@ export function SearchIcon({ className }: IconProps) {
   )
 }
 
+export function SpeakerIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M11 5 6 9H3v6h3l5 4z" />
+      <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+      <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+    </svg>
+  )
+}
+
+export function CloseIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  )
+}
+
 export function ArrowsUpDownIcon({ className }: IconProps) {
   return (
     <svg {...base(className)}>
@@ -152,6 +170,17 @@ export function SettingsIcon({ className }: IconProps) {
   )
 }
 
+/** 更多（三点）：手机端溢出菜单入口 */
+export function MoreIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <circle cx="5" cy="12" r="1.4" />
+      <circle cx="12" cy="12" r="1.4" />
+      <circle cx="19" cy="12" r="1.4" />
+    </svg>
+  )
+}
+
 export function CheckIcon({ className }: IconProps) {
   return (
     <svg {...base(className)}>
@@ -165,6 +194,15 @@ export function TagIcon({ className }: IconProps) {
     <svg {...base(className)}>
       <path d="M12 2H2v10l9.29 9.29a1 1 0 0 0 1.42 0l8.58-8.58a1 1 0 0 0 0-1.42z" />
       <circle cx="7" cy="7" r="1.5" />
+    </svg>
+  )
+}
+
+/** 漏斗（筛选）：筛选空态与筛选入口 */
+export function FilterIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M3 4h18l-7 8v7l-4 2v-9z" />
     </svg>
   )
 }
@@ -185,6 +223,27 @@ export function DownloadIcon({ className }: IconProps) {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <path d="M7 10l5 5 5-5" />
       <path d="M12 15V3" />
+    </svg>
+  )
+}
+
+export function GlobeIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <ellipse cx="12" cy="12" rx="4.5" ry="9" />
+    </svg>
+  )
+}
+
+export function RefreshIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+      <path d="M21 3v5h-5" />
+      <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+      <path d="M8 16H3v5" />
     </svg>
   )
 }

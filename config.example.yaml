@@ -17,3 +17,17 @@ import:
   cache_ttl_secs: 1800      # 预览会话有效期（秒）：超时未导入自动清理
   cache_cap: 16             # 预览会话缓存上限（条）：超出整体清空
   cache_cleanup_secs: 60    # 后台清理任务扫描间隔（秒）
+# 词典抓词（可选，缺省用下列值）：/api/dict/providers、/api/dict/lookup
+dict:
+  enabled: true
+  # 启用的词典源（顺序即聚合结果顺序）：youdao/baidu/eudic/bing/iciba/free_dict/wiktionary/urban
+  providers: [youdao, baidu, eudic, bing, iciba, free_dict, wiktionary, urban]
+  timeout_ms: 6000            # 单次上游请求超时（毫秒，500..=30000）
+  cache_ttl_secs: 604800      # 正向结果缓存（秒）
+  negative_ttl_secs: 600      # 未收录结果缓存（秒）
+  cache_cap: 2048             # 缓存条目上限
+  cache_cleanup_secs: 300     # 后台清理任务扫描间隔（秒）
+  max_concurrency: 8          # 同时进行中的上游请求上限
+  breaker_threshold: 3        # 连续失败多少次熔断该源
+  breaker_cooldown_secs: 60   # 熔断冷却时长（秒）
+  max_word_len: 64            # 单词最大字符数（1..=128）

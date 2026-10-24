@@ -20,6 +20,9 @@ pub enum ApiError {
     BadRequest(String),
     #[error("{0}")]
     Unauthorized(String),
+    /// 触发限流（如建议接口的按 IP 配额）
+    #[error("{0}")]
+    TooManyRequests(String),
     #[error("数据库错误: {0}")]
     Db(#[from] DbErr),
 }
@@ -30,6 +33,7 @@ impl IntoResponse for ApiError {
             ApiError::NotFound(m) => (StatusCode::NOT_FOUND, m),
             ApiError::BadRequest(m) => (StatusCode::BAD_REQUEST, m),
             ApiError::Unauthorized(m) => (StatusCode::UNAUTHORIZED, m),
+            ApiError::TooManyRequests(m) => (StatusCode::TOO_MANY_REQUESTS, m),
             ApiError::Db(e) => {
                 // 内部细节只进日志，不暴露给客户端
                 tracing::error!("数据库错误: {e}");
@@ -91,6 +95,12 @@ mod tests {
         assert_eq!(
             ApiError::Unauthorized("x".into()).into_response().status(),
             StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            ApiError::TooManyRequests("x".into())
+                .into_response()
+                .status(),
+            StatusCode::TOO_MANY_REQUESTS
         );
         assert_eq!(
             ApiError::Db(sea_orm::DbErr::Custom("x".into()))

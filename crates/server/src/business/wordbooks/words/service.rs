@@ -1106,7 +1106,7 @@ mod tests {
             WordService::parse_tag_groups(Some(
                 r#"{"groups":[{"mode":"and","ids":[1]},{"mode":"or","ids":[2]}],"links":["xor"]}"#
             )),
-            Err(WordError::InvalidTagGroups { raw, detail }) if detail.contains("不支持的连接方式")
+            Err(WordError::InvalidTagGroups { raw: _, detail }) if detail.contains("不支持的连接方式")
         ));
     }
 

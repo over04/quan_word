@@ -1,6 +1,9 @@
-use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
+use axum::extract::{Query, State};
+use axum::{http::StatusCode, routing::get, Json, Router};
 
 use super::dto::create::CreateWordbookReq;
+use super::dto::presence::WordPresenceQuery;
+use super::dto::presence_resp::WordPresenceResp;
 use super::dto::resp::WordbookResp;
 use super::dto::update::UpdateWordbookReq;
 use super::service::WordbookService;
@@ -14,6 +17,7 @@ use crate::common::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/wordbooks", get(list_wordbooks).post(create_wordbook))
+        .route("/api/wordbooks/word-presence", get(word_presence))
         .route(
             "/api/wordbooks/{id}",
             get(get_wordbook)
@@ -35,6 +39,15 @@ pub async fn get_wordbook(
     ApiPath(id): ApiPath<i32>,
 ) -> Result<Json<WordbookResp>, ApiError> {
     Ok(Json(WordbookService::get(&state, id).await?))
+}
+
+pub async fn word_presence(
+    State(state): State<AppState>,
+    Query(query): Query<WordPresenceQuery>,
+) -> Result<Json<WordPresenceResp>, ApiError> {
+    Ok(Json(
+        WordbookService::presence(&state, query.spelling.as_deref()).await?,
+    ))
 }
 
 pub async fn create_wordbook(

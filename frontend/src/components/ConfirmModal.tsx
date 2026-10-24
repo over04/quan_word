@@ -24,13 +24,13 @@ export default function ConfirmModal({
       <div className="mt-8 flex justify-end gap-3">
         <button
           onClick={onCancel}
-          className="px-5 py-2 rounded-full border border-charcoal/20 text-charcoal text-sm font-medium hover:bg-white hover:border-charcoal/40 transition-all"
+          className="min-h-11 px-5 rounded-full border border-charcoal/20 text-charcoal text-sm font-medium hover:bg-white hover:border-charcoal/40 active:scale-95 transition-all"
         >
           取消
         </button>
         <button
           onClick={onConfirm}
-          className="px-5 py-2 rounded-full bg-clay text-ivory text-sm font-medium hover:bg-clay/90 transition-all shadow-lg shadow-clay/20"
+          className="min-h-11 px-5 rounded-full bg-clay text-ivory text-sm font-medium hover:bg-clay/90 active:scale-95 transition-all shadow-lg shadow-clay/20"
         >
           {confirmText}
         </button>

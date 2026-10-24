@@ -1,0 +1,309 @@
+/* 单词工作台（添加 / 编辑单词）—— 两张卡（Visual Organic）
+   视觉口径 = docs/dev/style.md，与 TagManageModal（tag-page.css）/ WordTable / Bookshelf 同一套：
+     顶条在象牙白 + 环境底图上（返回 44 · 衬线标题 · 未保存 · 词典 · 保存）；
+     下面是并排两张卡，同一个父级 .wb-body：
+       .wb-sheet 左「纸卡」#FDFAF4（垫纸 #F2EAE0 位移 8px）装表单；
+       .wb-rail  右「白卡」装词典（卡面由 rail.css 的 .rail-root 画）。
+     flex 的 stretch 让两张卡 top / bottom 完全对齐，桌面间距 20（16–20 区间内）；
+     <768 词典改成从底部升起的覆盖面板（见文件末尾），表单始终吃满整屏。
+
+   垫纸、圆角、阴影、描边、字级、间距、按钮、徽章、入场动画全部写在
+   WordFormModal.tsx 的工具类里（animate-page-in / animate-fade-in-up / animate-word-rise
+   都已在 index.css 登记，转场期间由 vt-running 名单统一快进）。
+   本文件只保留 Tailwind 工具类表达不了的几件事：
+
+     1) 两张卡的外框：桌面列宽（白卡 312 / 376 / 472）与 390 上下分屏的高度分配；
+     2) 表单滚动区 / 词典结果流 / 例句框的 6px 圆头滚动条（::-webkit-scrollbar 无法用工具类选中）；
+     3) 词典结果流的底部留白（不画遮挡条：任何滚动位置都没有线穿过最后一行与行尾 44 控件）；
+     4) 词典栏容器的 [hidden] 显示规则（hidden 属性会被 display:flex 工具类压过）。
+
+   改列宽只改 .wb-rail 的 flex-basis：白卡宽度即列宽（栏内不再有内边距，间距由 gap 给）；
+   改窄屏面板高度只改 @media (max-width:767px) 里 .wb-rail 的 height。
+   这里不再维护第二套墨量阶梯，也不再有任何自定义 keyframes。 */
+
+/* ================= 两张卡的外框 =================
+   ≥768：一行两卡 —— 纸卡 flex:1 ｜ 白卡 312 / 376 / 472，gap 20
+   <768：上下分屏 —— 纸卡 34% / 把手 44 / 白卡吃剩余（比例见文件末尾） */
+
+.wb-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 左：纸卡（relative 给垫纸做定位；垫纸与卡面都在 .wb-sheet 里） */
+.wb-sheet {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* 右：词典白卡。这里只负责列宽、拉伸与「不裁切」
+   （overflow:hidden 会把 .rail-root 的 shadow-sm 削掉一条边）。 */
+.wb-rail {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* hidden 属性必须压过上面的 display:flex（否则收起词典后右栏仍占一格） */
+.wb-rail[hidden] {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .wb-body {
+    flex-direction: row;
+    gap: 20px;
+  }
+
+  .wb-rail {
+    flex-basis: 312px;
+  }
+}
+
+@media (min-width: 1024px) {
+  .wb-rail {
+    flex-basis: 376px;
+  }
+}
+
+@media (min-width: 1280px) {
+  .wb-rail {
+    flex-basis: 472px;
+  }
+}
+
+/* ================= 表单列 ================= */
+
+.wb-form {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 表单滚动区（滚动条见下方「滚动条」一节） */
+.wb-form-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ================= 滚动条 =================
+   表单滚动区 / 词典结果流 / 例句文本框共用一套：6px 圆头拇指 + 完全透明轨道 + 无箭头。
+   UA 的 15px 灰条会在纸面上留一条灰槽，还会把右侧留白吃掉 15px。
+   （rail.css 对 .rail-flow 有同一套规则；这里用更高的选择器权重再声明一遍，
+    加载顺序变化或漏 @import 时也不会露出 UA 灰条。） */
+
+.wb-form-scroll,
+.wb-rail .rail-flow,
+.wb-sheet textarea {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(47 42 37 / 0.18) transparent;
+}
+
+.wb-form-scroll::-webkit-scrollbar,
+.wb-rail .rail-flow::-webkit-scrollbar,
+.wb-sheet textarea::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.wb-form-scroll::-webkit-scrollbar-track,
+.wb-rail .rail-flow::-webkit-scrollbar-track,
+.wb-sheet textarea::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.wb-form-scroll::-webkit-scrollbar-thumb,
+.wb-rail .rail-flow::-webkit-scrollbar-thumb,
+.wb-sheet textarea::-webkit-scrollbar-thumb {
+  border: 0;
+  border-radius: 9999px;
+  background-color: rgb(47 42 37 / 0.18);
+}
+
+.wb-form-scroll:hover::-webkit-scrollbar-thumb,
+.wb-rail .rail-flow:hover::-webkit-scrollbar-thumb,
+.wb-sheet textarea:hover::-webkit-scrollbar-thumb {
+  background-color: rgb(47 42 37 / 0.3);
+}
+
+.wb-form-scroll::-webkit-scrollbar-button,
+.wb-rail .rail-flow::-webkit-scrollbar-button,
+.wb-sheet textarea::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+.wb-form-scroll::-webkit-scrollbar-corner,
+.wb-rail .rail-flow::-webkit-scrollbar-corner,
+.wb-sheet textarea::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ================= 词典结果流 =================
+   结果流必须自己吃掉卡片剩余高度（flex: 1 1 auto + min-height: 0）：
+   搜索 57 + 来源行 61 + 底栏 57 + 卡面描边 2 一旦超过卡片高度，结果区就会被挤成 0
+   （390 分屏的实机缺陷：白卡 368 时结果流只剩 191）。
+   底部留白 = 遮挡条高度（40）：遮挡条只压住留白，滚到底时最后一行完整可见（不是渐变）。
+   <768 见文件末尾：遮挡条摘掉、留白收到 12、flex/min-height 再声明一遍（不依赖加载顺序）。 */
+
+.wb-rail .rail-flow {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 16px;
+}
+
+/* ================= <768：词典是覆盖面板（不再上下分屏） =================
+   分屏把表单压成一条、结果区挤到 0，而「分屏 / 仅表单」两个胶囊浮在象牙底上既不可见也不好用。
+   现在点「词典」从底部升起一张白卡（86dvh、顶部圆角），表单始终吃满整屏；
+   关面板：遮罩点击 / 面板里的「收起」/ Esc（逐层，由 WordFormModal 处理）。 */
+
+@media (max-width: 767px) {
+  .wb-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background-color: rgb(47 42 37 / 0.28);
+    animation: wbScrimIn 0.18s ease-out both;
+  }
+
+  .wb-rail {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 41;
+    height: 86dvh;
+    max-height: 86dvh;
+    animation: wbSheetUp 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  /* 面板里白卡铺满，只留上圆角，并让出底部安全区 */
+  .wb-rail .rail-root {
+    height: 100%;
+    border-radius: 16px 16px 0 0;
+    border-bottom: 0;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .wb-rail .rail-flow {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding-bottom: 12px;
+  }
+}
+
+@keyframes wbScrimIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes wbSheetUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* ================= 收起动画 =================
+   条件渲染是瞬间卸载：节点直接从 DOM 里消失，任何 transition 都来不及跑
+   （收起词典以前就是「啪」一下没了）。现在 usePresence 让节点多留 260ms，
+   这里按 data-state='closing' 播退场：
+   ≥768 收列宽 + 右移淡出（表单卡同步变宽），<768 整张滑下去 + 遮罩淡出。 */
+
+@media (min-width: 768px) {
+  .wb-rail {
+    transition:
+      flex-basis 0.26s cubic-bezier(0.22, 1, 0.36, 1),
+      margin-left 0.26s cubic-bezier(0.22, 1, 0.36, 1),
+      opacity 0.2s ease,
+      transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  /* 收起态 = 入场起点：列宽 0 + 右移 + 透明，同时用负 margin 吃掉父级 20px 的 gap，
+     否则收到最后表单卡会「少 20px」，卸载那一帧再补上 —— 收尾会顿一下。 */
+  .wb-rail[data-state='closing'],
+  .wb-rail[data-state='entering'] {
+    flex-basis: 0;
+    margin-left: -20px;
+    opacity: 0;
+    transform: translateX(14px);
+    overflow: hidden;
+    pointer-events: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .wb-scrim[data-state='closing'] {
+    animation: wbScrimOut 0.2s linear both;
+    pointer-events: none;
+  }
+
+  .wb-rail[data-state='closing'] {
+    animation: wbSheetDown 0.24s cubic-bezier(0.4, 0, 0.2, 1) both;
+    pointer-events: none;
+  }
+}
+
+@keyframes wbScrimOut {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+
+@keyframes wbSheetDown {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(100%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-scrim,
+  .wb-rail {
+    animation: none;
+  }
+
+  /* 关掉动效时不能留 260ms 的「还在原地」：直接隐身 */
+  .wb-scrim[data-state='closing'],
+  .wb-rail[data-state='closing'] {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+/* 词头：衬线大字，底线只跟文字宽度（field-sizing 支持的浏览器上随内容伸缩，
+   不支持时退回默认宽度 —— 底线永远不会横贯整行） */
+.wb-headword {
+  field-sizing: content;
+  min-width: 5ch;
+  max-width: 100%;
+}

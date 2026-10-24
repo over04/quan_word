@@ -1,12 +1,14 @@
 //! 应用配置：YAML 加载与启动期校验。
 
 mod database;
+pub(crate) mod dict;
 mod import;
 mod server;
 
 use anyhow::{Context, Result};
 
 use self::database::DatabaseConfig;
+use self::dict::DictConfig;
 use self::import::ImportConfig;
 use self::server::ServerConfig;
 
@@ -18,6 +20,9 @@ pub struct Config {
     /// 批量导入：解析上限与预览会话缓存生命周期
     #[serde(default)]
     pub import: ImportConfig,
+    /// 词典抓词：源开关、超时、缓存/熔断参数
+    #[serde(default)]
+    pub dict: DictConfig,
 }
 
 impl Config {
@@ -35,6 +40,9 @@ impl Config {
                     anyhow::bail!(
                         "配置错误: import.cache_ttl_secs 与 import.cache_cleanup_secs 必须大于 0"
                     );
+                }
+                if let Err(msg) = cfg.dict.validate() {
+                    anyhow::bail!("配置错误: {msg}");
                 }
                 Ok(cfg)
             }

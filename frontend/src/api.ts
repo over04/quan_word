@@ -7,6 +7,14 @@ import type { CreateTagReq } from './generated/CreateTagReq'
 import type { CreateWordReq } from './generated/CreateWordReq'
 import type { CreateWordbookReq } from './generated/CreateWordbookReq'
 import type { Definition } from './generated/Definition'
+import type { DictEntry } from './generated/DictEntry'
+import type { DictExample } from './generated/DictExample'
+import type { DictLookupResp } from './generated/DictLookupResp'
+import type { DictProviderErrorResp } from './generated/DictProviderErrorResp'
+import type { DictProviderId } from './generated/DictProviderId'
+import type { DictProviderResp } from './generated/DictProviderResp'
+import type { DictSuggestResp } from './generated/DictSuggestResp'
+import type { DictSuggestion } from './generated/DictSuggestion'
 import type { ImportExecReq } from './generated/ImportExecReq'
 import type { ImportPreviewResp } from './generated/ImportPreviewResp'
 import type { ImportResp } from './generated/ImportResp'
@@ -20,6 +28,8 @@ import type { UpdateTagReq } from './generated/UpdateTagReq'
 import type { UpdateWordTagsReq } from './generated/UpdateWordTagsReq'
 import type { Word } from './generated/Word'
 import type { Wordbook } from './generated/Wordbook'
+import type { WordPresenceBook } from './generated/WordPresenceBook'
+import type { WordPresenceResp } from './generated/WordPresenceResp'
 
 export type {
   BatchDeleteWordsReq,
@@ -30,6 +40,14 @@ export type {
   CreateWordReq,
   CreateWordbookReq,
   Definition,
+  DictEntry,
+  DictExample,
+  DictLookupResp,
+  DictProviderErrorResp,
+  DictProviderId,
+  DictProviderResp,
+  DictSuggestResp,
+  DictSuggestion,
   ImportExecReq,
   ImportPreviewResp,
   ImportResp,
@@ -43,6 +61,8 @@ export type {
   UpdateWordTagsReq,
   Word,
   Wordbook,
+  WordPresenceBook,
+  WordPresenceResp,
 }
 
 /** 标签筛选组：组内按 mode 匹配（and=全部命中 / or=任一命中 / none=没有任何标签） */
@@ -74,13 +94,25 @@ export function setApiKey(k: string | null) {
   else localStorage.removeItem(KEY_STORAGE)
 }
 
+/** 断网/跨域/CORS 失败时浏览器抛 TypeError('Failed to fetch')：统一成中文，保留可重试语义 */
+const NETWORK_ERROR = '网络连接失败，请检查网络后重试'
+
+async function request(path: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(path, init)
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') throw e
+    throw new Error(NETWORK_ERROR)
+  }
+}
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { ...(init?.headers as Record<string, string> | undefined) }
   const key = getApiKey()
   if (key) headers['Authorization'] = `Bearer ${key}`
   // 仅 JSON 字符串 body 需要手动设 Content-Type；FormData 由浏览器自动带 boundary
   if (init?.body && typeof init.body === 'string') headers['Content-Type'] = 'application/json'
-  const res = await fetch(path, { ...init, headers })
+  const res = await request(path, { ...init, headers })
   if (res.status === 401) {
     setApiKey(null)
     window.dispatchEvent(new Event('qw:auth-required'))
@@ -108,6 +140,12 @@ export const wordbooks = {
   update: (id: number, req: Partial<CreateWordbookReq>) =>
     api<Wordbook>(`/api/wordbooks/${id}`, { method: 'PUT', body: JSON.stringify(req) }),
   remove: (id: number) => api<void>(`/api/wordbooks/${id}`, { method: 'DELETE' }),
+  /** 跨书查询某拼写是否已存在（主页词典列表展示所在词书） */
+  presence: (spelling: string, opts?: { signal?: AbortSignal }) =>
+    api<WordPresenceResp>(
+      `/api/wordbooks/word-presence?spelling=${encodeURIComponent(spelling)}`,
+      { ...(opts?.signal ? { signal: opts.signal } : {}) },
+    ),
 }
 
 export const words = {
@@ -186,7 +224,7 @@ export const words = {
     const headers: Record<string, string> = {}
     const key = getApiKey()
     if (key) headers['Authorization'] = `Bearer ${key}`
-    const res = await fetch(`/api/wordbooks/${bookId}/words/template?format=${format}`, { headers })
+    const res = await request(`/api/wordbooks/${bookId}/words/template?format=${format}`, { headers })
     if (res.status === 401) {
       setApiKey(null)
       window.dispatchEvent(new Event('qw:auth-required'))
@@ -210,6 +248,35 @@ export const words = {
     a.click()
     URL.revokeObjectURL(url)
   },
+}
+
+/** 词典抓词：源列表 + 聚合查询（单源失败不影响整体，仍为 200） */
+export const dict = {
+  /** 全部词典源（含是否在配置中启用） */
+  providers: () => api<DictProviderResp[]>('/api/dict/providers'),
+  /**
+   * 聚合查询：providers 缺省 = 后端全部启用源；refresh = 跳过后端缓存强制回源。
+   * signal 透传给 fetch（组件卸载/参数变化时取消）。
+   */
+  lookup: (
+    word: string,
+    providers?: DictProviderId[],
+    opts?: { refresh?: boolean; signal?: AbortSignal },
+  ) => {
+    const parts = [`word=${encodeURIComponent(word)}`]
+    if (providers && providers.length > 0) {
+      parts.push(`providers=${encodeURIComponent(providers.join(','))}`)
+    }
+    if (opts?.refresh) parts.push('refresh=1')
+    return api<DictLookupResp>(`/api/dict/lookup?${parts.join('&')}`, {
+      ...(opts?.signal ? { signal: opts.signal } : {}),
+    })
+  },
+  /** 模糊建议：输入前缀/近似拼写，返回单词 + 简短释义列表 */
+  suggest: (word: string, opts?: { signal?: AbortSignal }) =>
+    api<DictSuggestResp>(`/api/dict/suggest?word=${encodeURIComponent(word)}`, {
+      ...(opts?.signal ? { signal: opts.signal } : {}),
+    }),
 }
 
 export const tags = {

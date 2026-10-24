@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -5,6 +6,8 @@ use entity::wordbook;
 use sea_orm::Set;
 
 use super::dto::create::CreateWordbookReq;
+use super::dto::presence_book::WordPresenceBook;
+use super::dto::presence_resp::WordPresenceResp;
 use super::dto::resp::WordbookResp;
 use super::dto::update::UpdateWordbookReq;
 use super::error::WordbookError;
@@ -127,5 +130,41 @@ impl WordbookService {
         }
         state.invalidate_wordbooks();
         Ok(())
+    }
+
+    /// 跨书查询某拼写：返回所在的书与词条 id（主页词典列表展示用）。
+    pub async fn presence(
+        state: &AppState,
+        spelling: Option<&str>,
+    ) -> Result<WordPresenceResp, WordbookError> {
+        let spelling = spelling.unwrap_or("").trim();
+        if spelling.is_empty() {
+            return Err(WordbookError::EmptySpelling);
+        }
+        let db = state.db.as_ref();
+        let words = WordbookRepo::find_words_by_spelling(db, spelling).await?;
+        let ids: Vec<i32> = words.iter().map(|word| word.wordbook_id).collect();
+        let books = WordbookRepo::find_books_by_ids(db, &ids).await?;
+        let names: HashMap<i32, String> =
+            books.into_iter().map(|book| (book.id, book.name)).collect();
+        let mut seen: Vec<i32> = Vec::new();
+        let books = words
+            .into_iter()
+            .filter_map(|word| {
+                if seen.contains(&word.wordbook_id) {
+                    return None;
+                }
+                seen.push(word.wordbook_id);
+                names.get(&word.wordbook_id).map(|name| WordPresenceBook {
+                    book_id: word.wordbook_id,
+                    book_name: name.clone(),
+                    word_id: word.id,
+                })
+            })
+            .collect();
+        Ok(WordPresenceResp {
+            spelling: spelling.to_string(),
+            books,
+        })
     }
 }

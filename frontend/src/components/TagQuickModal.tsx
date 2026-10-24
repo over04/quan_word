@@ -1,5 +1,8 @@
 import { useState } from 'react'
 import { words, type Tag, type Word } from '../api'
+import { useDiscardGuard, useUnsavedChanges } from '../hooks/useUnsavedChanges'
+import { useTagDraft } from '../hooks/useTagDraft'
+import DiscardConfirmModal from './DiscardConfirmModal'
 import Modal from './Modal'
 import TagPicker from './TagPicker'
 
@@ -10,11 +13,11 @@ interface Props {
   onClose: () => void
   /** 标签集变更成功（父级刷新数据） */
   onChanged: () => void
-  /** 新建标签成功后回调（父级刷新标签列表） */
+  /** 新建标签成功后回调（父级刷新标签列表，仅内存同步） */
   onTagsCreated: (tag: Tag) => void
 }
 
-/** 单词快速标签编辑弹窗：每次切换即时保存（全量替换该词标签集） */
+/** 单词快速标签编辑弹窗：选择只改本地草稿，点击保存才提交（全量替换该词标签集） */
 export default function TagQuickModal({
   bookId,
   word,
@@ -23,54 +26,51 @@ export default function TagQuickModal({
   onChanged,
   onTagsCreated,
 }: Props) {
-  const [selected, setSelected] = useState<Set<number>>(new Set(word.tags))
+  const draft = useTagDraft(word.tags, all, onTagsCreated)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const guard = useDiscardGuard(draft.dirty, onClose)
+  useUnsavedChanges(draft.dirty)
 
-  async function apply(next: Set<number>) {
+  function requestClose() {
     if (busy) return
+    guard.requestClose()
+  }
+
+  async function handleSave() {
+    if (busy || !draft.dirty) return
     setBusy(true)
     setError('')
     try {
-      await words.updateTags(bookId, word.id, [...next])
-      setSelected(next)
+      const ids = await draft.resolve(bookId)
+      await words.updateTags(bookId, word.id, ids)
       onChanged()
+      onClose()
     } catch (e) {
       setError(e instanceof Error ? e.message : '保存失败')
-    } finally {
       setBusy(false)
     }
   }
 
-  function toggle(id: number) {
-    const next = new Set(selected)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    apply(next)
-  }
-
   return (
-    <Modal onClose={onClose} maxWidth="max-w-sm">
+    <Modal onClose={requestClose} maxWidth="max-w-sm">
       <div className="flex items-center gap-3">
         <div className="w-9 h-9 rounded-full bg-sage flex items-center justify-center text-white">
           <span className="font-serif text-sm">标</span>
         </div>
         <div className="min-w-0">
           <h2 className="font-serif text-xl text-charcoal truncate">{word.spelling}</h2>
-          <p className="text-xs text-charcoal/50 mt-0.5">点击标签即时保存</p>
         </div>
       </div>
 
       <div className="mt-6">
         <TagPicker
-          bookId={bookId}
           tags={all}
-          selected={selected}
-          onToggle={toggle}
-          onCreated={(tag) => {
-            onTagsCreated(tag)
-            apply(new Set(selected).add(tag.id))
-          }}
+          pending={draft.pending}
+          selected={draft.selected}
+          onToggle={draft.toggle}
+          onCreate={draft.create}
+          disabled={busy}
         />
       </div>
 
@@ -80,14 +80,28 @@ export default function TagQuickModal({
         </p>
       )}
 
-      <div className="mt-8 flex justify-end">
+      <div className="mt-8 flex justify-end gap-3">
         <button
-          onClick={onClose}
-          className="px-5 py-2 rounded-full border border-charcoal/20 text-charcoal text-sm font-medium hover:bg-white hover:border-charcoal/40 transition-all"
+          type="button"
+          onClick={requestClose}
+          disabled={busy}
+          className="min-h-11 px-5 rounded-full border border-charcoal/20 text-charcoal text-sm font-medium hover:bg-white hover:border-charcoal/40 active:scale-95 transition-all disabled:opacity-50"
         >
-          完成
+          取消
+        </button>
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={busy || !draft.dirty}
+          className="min-h-11 px-6 rounded-full bg-charcoal text-ivory text-sm font-medium hover:bg-charcoal/90 active:scale-95 transition-all shadow-lg shadow-charcoal/10 disabled:opacity-50"
+        >
+          {busy ? '保存中…' : '保存'}
         </button>
       </div>
+
+      {guard.confirmOpen && (
+        <DiscardConfirmModal onDiscard={guard.confirmDiscard} onCancel={guard.cancelDiscard} />
+      )}
     </Modal>
   )
 }

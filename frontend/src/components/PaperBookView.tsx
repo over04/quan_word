@@ -1,6 +1,6 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { type Page, type Tag, type Word } from '../api'
-import { BookIcon, PlusIcon, WrenchIcon } from './Icons'
+import { BookIcon, FilterIcon, PlusIcon, WrenchIcon } from './Icons'
 import TagQuickModal from './TagQuickModal'
 
 interface Props {
@@ -11,6 +11,10 @@ interface Props {
   /** 哨兵进入视口（提前 800px）时触发；参数 = 要加载的下一页页码与该书总页数 */
   onReachEnd: (nextPageNo: number, totalPages: number) => void
   onAddFirst: () => void
+  /** 当前有标签筛选（空态要区分「这本书没有单词」与「筛选没匹配到」） */
+  filtered: boolean
+  /** 清除筛选（筛选空态里的出口） */
+  onClearFilter: () => void
   /** 单词字号（px，12–28），音标/释义/行高按比例联动 */
   fontScale: number
   /** 基线：整书单词（含音标）/ 释义 是否全隐藏 */
@@ -61,19 +65,17 @@ function formatDefinitions(w: Word): string {
   return w.definitions.map((d) => (d.pos ? `${d.pos} ${d.meaning}` : d.meaning)).join('；')
 }
 
-/** 遮挡 = 模糊：中心浓雾向四周宽范围渐渐变淡（单层径向 mask，椭圆放大 + 62% 过渡带），融入纸面无切割感 */
+/**
+ * 遮挡 = 静态纸雾：文字保留在 DOM（占位不变、宽度不变），视觉上被一块纸色蒙层盖住。
+ *
+ * 之前用 `filter: blur()` + 径向 mask 做浓雾，整页几十个元素各自成层（每帧都要重新栅格化），
+ * 滚动直接掉到 30fps。现在改用 motion 的 `.paper-veil`（文字 `color: transparent` + 静态高斯
+ * `text-shadow` + `opacity`）：仍是「雾字」外观，但属于绘制期效果，零 filter / 零 mask /
+ * 零常驻 will-change，滚动没有额外合成成本。
+ */
 function Covered({ text }: { text: string }) {
   return (
-    <span
-      className="inline-block max-w-full select-none break-words blur-[6px] opacity-65 transition-[filter,opacity] duration-300"
-      style={{
-        WebkitMaskImage:
-          'radial-gradient(ellipse 150% 160% at 50% 50%, black 12%, transparent 74%)',
-        maskImage: 'radial-gradient(ellipse 150% 160% at 50% 50%, black 12%, transparent 74%)',
-        // 整页遮挡时大量 blur 元素：提示合成器独立图层，避免频繁重栅格化
-        willChange: 'filter',
-      }}
-    >
+    <span className="paper-veil inline-block max-w-full select-none break-words" aria-hidden="true">
       {text}
     </span>
   )
@@ -118,20 +120,21 @@ const WordLineCell = memo(function WordLineCell({
       className={`group/cell px-2 md:px-3 pt-1 min-w-0 hover:bg-sand/15 transition-colors ${anim ? 'animate-word-rise' : ''}`}
       style={anim ? { animationDelay: `${Math.min(index, 8) * 40}ms` } : undefined}
     >
-      <div className="flex items-end gap-2 min-w-0" style={{ minHeight: f.rowH }}>
+      <div className="flex flex-col items-start gap-0.5 min-w-0 sm:flex-row sm:items-end sm:gap-2" style={{ minHeight: f.rowH }}>
         <button
           onClick={() => onToggleWord(w.id)}
           aria-pressed={wordHidden}
+          aria-label={wordHidden ? '显示单词' : `遮挡单词 ${w.spelling}`}
           title={wordHidden ? '点击显示单词' : '点击遮挡单词，回忆拼写'}
           style={f.word}
-          className="min-w-0 font-serif text-charcoal tracking-wide leading-tight pb-[3px] break-words rounded -mx-1 px-1 transition-colors duration-150 hover:bg-sand/50 focus-visible:outline-2 focus-visible:outline-clay focus-visible:outline-offset-4"
+          className="relative w-full min-w-0 text-left font-serif text-charcoal tracking-wide leading-tight pb-[2px] break-words rounded -mx-1 px-1 transition-colors duration-150 hover:bg-sand/50 focus-visible:outline-2 focus-visible:outline-clay focus-visible:outline-offset-4 before:absolute before:inset-x-0 before:-inset-y-3 before:content-[''] sm:w-auto"
         >
           {wordHidden ? <Covered text={w.spelling} /> : w.spelling}
         </button>
         {w.phonetic && (
           <span
             style={f.phonetic}
-            className="min-w-0 text-charcoal/40 tracking-wide leading-tight pb-[4px] break-words"
+            className="min-w-0 max-w-full text-charcoal/45 tracking-wide leading-tight pb-[2px] whitespace-nowrap overflow-hidden text-ellipsis sm:pb-[4px]"
           >
             {wordHidden ? <Covered text={w.phonetic} /> : w.phonetic}
           </span>
@@ -178,9 +181,10 @@ const WordDefCell = memo(function WordDefCell({
         <button
           onClick={() => onToggleDef(w.id)}
           aria-pressed={defHidden}
+          aria-label={defHidden ? '显示释义' : '遮挡释义'}
           title={defHidden ? '点击显示释义' : full}
           style={f.def}
-          className="w-full text-charcoal/60 leading-snug text-left rounded -mx-1 px-1 transition-colors duration-150 hover:bg-sand/50 focus-visible:outline-2 focus-visible:outline-clay focus-visible:outline-offset-4"
+          className="relative w-full text-charcoal/60 leading-snug text-left rounded -mx-1 px-1 transition-colors duration-150 hover:bg-sand/50 focus-visible:outline-2 focus-visible:outline-clay focus-visible:outline-offset-4 before:absolute before:inset-x-0 before:-inset-y-4 before:content-['']"
         >
           {defHidden ? <Covered text={full} /> : full}
         </button>
@@ -206,7 +210,7 @@ const WordDefCell = memo(function WordDefCell({
           title="管理标签"
           aria-label={`管理 ${w.spelling} 的标签`}
           style={{ width: f.iconSize + 6, height: f.iconSize + 6 }}
-          className="shrink-0 rounded-full flex items-center justify-center text-charcoal/25 hover:text-clay hover:bg-sand/50 transition-colors"
+          className="shrink-0 min-w-11 min-h-11 -my-2 rounded-full flex items-center justify-center text-charcoal/25 hover:text-clay hover:bg-sand/50 active:scale-95 transition-all"
         >
           <WrenchIcon className="" style={{ width: f.iconSize, height: f.iconSize }} />
         </button>
@@ -220,6 +224,8 @@ export default function PaperBookView({
   loading,
   onReachEnd,
   onAddFirst,
+  filtered,
+  onClearFilter,
   fontScale,
   hideAllWord,
   hideAllDef,
@@ -306,6 +312,24 @@ export default function PaperBookView({
   }
 
   if (pages[0].d.items.length === 0) {
+    // 筛选没匹配到 ≠ 这本书是空的：不能给「添加第一个单词」（书里明明有词，用户会被误导）
+    if (filtered) {
+      return (
+        <div className="max-w-md mx-auto text-center py-16 animate-fade-in-up">
+          <div className="mx-auto w-20 h-20 rounded-2xl bg-sand/40 flex items-center justify-center text-clay">
+            <FilterIcon className="w-9 h-9" />
+          </div>
+          <h2 className="font-serif text-3xl text-charcoal mt-7">没有符合筛选的单词</h2>
+          <p className="mt-3 text-charcoal/60 leading-relaxed">试试放宽条件，或清除筛选查看全部单词。</p>
+          <button
+            onClick={onClearFilter}
+            className="mt-8 min-h-11 border border-charcoal/25 text-charcoal px-8 rounded-full font-medium hover:bg-charcoal/5 transition-colors inline-flex items-center gap-2"
+          >
+            清除筛选
+          </button>
+        </div>
+      )
+    }
     return (
       <div className="max-w-md mx-auto text-center py-16 animate-fade-in-up">
         <div className="mx-auto w-20 h-20 rounded-2xl bg-sand/40 flex items-center justify-center text-clay">
