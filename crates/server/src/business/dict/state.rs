@@ -66,12 +66,12 @@ impl DictState {
             "词典插件装载完成"
         );
         if config.enabled {
-            if let Some(missing) = state
+            for missing in state
                 .enabled
                 .iter()
-                .find(|id| state.engine.get(id).is_none())
+                .filter(|id| state.engine.get(id).is_none())
             {
-                anyhow::bail!("dict.providers 含未安装的词典源: {missing}");
+                tracing::warn!(provider = %missing, "dict.providers 含未安装的词典源，已跳过");
             }
         }
         Ok(state)
@@ -218,7 +218,9 @@ impl DictState {
     pub fn set_enabled(&self, id: &ProviderId, enabled: bool) -> Option<PluginInfo> {
         let plugin = self.engine.get(id)?;
         let outside_config = !self.enabled.is_empty() && !self.enabled.contains(id);
-        self.prefs.write().set_enabled(id, enabled, outside_config);
+        let mut prefs = self.prefs.write();
+        prefs.set_enabled(id, enabled, outside_config);
+        self.suggest_cache.clear();
         Some(plugin)
     }
 

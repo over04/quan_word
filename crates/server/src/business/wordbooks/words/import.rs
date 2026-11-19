@@ -238,19 +238,27 @@ fn parse_csv(bytes: &[u8], max_rows: usize) -> Result<Vec<RowData>, WordError> {
         .from_reader(text.as_bytes());
     let mut rows = Vec::new();
     let mut record = csv::StringRecord::new();
-    let mut idx = 0usize;
+    let mut header = true;
+    let bytes = text.as_bytes();
+    let line_starts: Vec<_> = std::iter::once(0)
+        .chain(bytes.iter().enumerate().filter_map(|(i, &b)| {
+            (b == b'\n' || (b == b'\r' && bytes.get(i + 1) != Some(&b'\n'))).then_some(i + 1)
+        }))
+        .collect();
     while rdr
         .read_record(&mut record)
         .map_err(|e| parse_error(format!("无法解析文件: {e}")))?
     {
-        if idx == 0 {
-            idx += 1;
-            continue; // 表头
+        if std::mem::take(&mut header) {
+            continue;
         }
-        idx += 1;
-        // position().line() 为物理行号（1 起，含空行；csv 库会丢弃完全空行，不能依赖记录下标）。
-        // 读取记录后 position 指向该记录的下一行，故减 1 得当前记录行号。
-        let row_no = rdr.position().line() as usize - 1;
+        // csv 的记录起始位置还可能包含被跳过的空行；按字节追踪实际起始物理行。
+        let offset = record.position().expect("读取的 CSV 记录有偏移").byte() as usize;
+        let skipped = bytes[offset..]
+            .iter()
+            .take_while(|&&b| b == b'\r' || b == b'\n')
+            .count();
+        let row_no = line_starts.partition_point(|&start| start <= offset + skipped);
         rows.push(RowData {
             row_no,
             spelling: record.get(0).unwrap_or("").to_string(),
@@ -362,6 +370,23 @@ mod tests {
         assert_eq!(rows[0].spelling, "hello");
         assert_eq!(rows[0].meaning, "放弃");
         assert_eq!(rows[0].tags, "高频");
+    }
+
+    #[test]
+    fn csv_rows_keep_their_start_line_across_gaps_and_multiline_fields() {
+        for newline in ["\n", "\r\n", "\r"] {
+            let input = [
+                "header,,",
+                "apple,,,苹果",
+                "",
+                "banana,,,\"香",
+                "蕉\"",
+                "cherry,,,樱桃",
+            ]
+            .join(newline);
+            let rows = parse_csv(input.as_bytes(), 20).unwrap();
+            assert_eq!(rows.iter().map(|r| r.row_no).collect::<Vec<_>>(), [2, 4, 6]);
+        }
     }
 
     #[test]

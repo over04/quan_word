@@ -29,7 +29,7 @@ export default function DictHome({ presenceVersion, onOpenDetail }: Props) {
 
   function submit(event: React.FormEvent) {
     event.preventDefault()
-    if (input.trim().length < 2) return
+    if (!searching || suggest.loading) return
     const first = suggest.suggestions[0]
     if (first) {
       open(first.word)

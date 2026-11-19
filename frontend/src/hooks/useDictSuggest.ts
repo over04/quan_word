@@ -14,72 +14,67 @@ interface CacheEntry {
 }
 
 const cache = new Map<string, CacheEntry>()
+let cacheGeneration = 0
 
 /** 插件导入/删除/启停后调用：来源变了，旧的空结果/旧建议不能继续复用。 */
 export function clearSuggestCache() {
+  cacheGeneration += 1
   cache.clear()
 }
 
-/** 模糊查词建议：输入变化自动查询，返回列表与加载态。 */
+interface SuggestResult {
+  word: string
+  attempt: number
+  suggestions: DictSuggestion[]
+  error: string
+}
+
+/** 只暴露当前输入对应的结果，等待新请求时不会提交上一个词。 */
 export function useDictSuggest(input: string) {
-  const [suggestions, setSuggestions] = useState<DictSuggestion[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const [version, setVersion] = useState(0)
+  const [result, setResult] = useState<SuggestResult | null>(null)
+  const [attempt, setAttempt] = useState(0)
   const word = input.trim()
+  const key = word.toLowerCase()
+  const searchable = word.length >= MIN_LENGTH
+  const hit = searchable ? cache.get(key) : undefined
+  const cached = hit && Date.now() - hit.at < CACHE_TTL_MS ? hit.items : undefined
+  const currentResult = searchable && result?.word === word && result.attempt === attempt
+    ? result
+    : null
 
   useEffect(() => {
-    if (word.length < MIN_LENGTH) {
-      setSuggestions([])
-      setLoading(false)
-      setError('')
-      return
-    }
-    const key = word.toLowerCase()
-    const hit = cache.get(key)
-    if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
-      setSuggestions(hit.items)
-      setLoading(false)
-      setError('')
-      return
-    }
-
+    if (!searchable || cached) return
     const controller = new AbortController()
-    setLoading(true)
-    setError('')
+    const requestGeneration = cacheGeneration
     const timer = window.setTimeout(() => {
-      dict
-        .suggest(word, { signal: controller.signal })
-        .then((res) => {
-          const hasResults = res.suggestions.length > 0
-          const items: DictSuggestion[] = hasResults
-            ? res.suggestions
-            : [{ word, summary: '' }]
-          // 只缓存真实结果：空结果常常是“当时没有启用源/还没导入插件”，
-          // 缓存 10 分钟会让用户导入插件后仍然搜不出来（game 曾经踩过）。
-          if (hasResults) cache.set(key, { at: Date.now(), items })
-          setSuggestions(items)
-          setLoading(false)
-        })
-        .catch((e: unknown) => {
-          if (!controller.signal.aborted) {
-            setSuggestions([])
-            setLoading(false)
-            setError(e instanceof Error ? e.message : '查词失败')
-          }
-        })
+      dict.suggest(word, { signal: controller.signal }).then((res) => {
+        if (controller.signal.aborted) return
+        const hasResults = res.suggestions.length > 0
+        const suggestions = hasResults ? res.suggestions : [{ word, summary: '' }]
+        if (hasResults && requestGeneration === cacheGeneration) {
+          cache.set(key, { at: Date.now(), items: suggestions })
+        }
+        setResult({ word, attempt, suggestions, error: '' })
+      }).catch((e: unknown) => {
+        if (controller.signal.aborted) return
+        setResult({ word, attempt, suggestions: [], error: e instanceof Error ? e.message : '查词失败' })
+      })
     }, DEBOUNCE_MS)
-
     return () => {
       controller.abort()
       window.clearTimeout(timer)
     }
-  }, [word, version])
+  }, [searchable, key, word, attempt, cached])
 
   const refresh = useCallback(() => {
-    cache.delete(word.toLowerCase())
-    setVersion((value) => value + 1)
-  }, [word])
+    cache.delete(key)
+    setAttempt((value) => value + 1)
+  }, [key])
 
-  return { suggestions, loading, error, refresh }
+  return {
+    suggestions: cached ?? (currentResult ? currentResult.suggestions : []),
+    loading: searchable && !cached && !currentResult,
+    error: currentResult && !cached ? currentResult.error : '',
+    refresh,
+  }
 }

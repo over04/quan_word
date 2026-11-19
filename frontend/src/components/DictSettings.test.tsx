@@ -119,7 +119,7 @@ describe('DictSettings', () => {
   })
 
   it('切换开关调用后端并更新状态', async () => {
-    mocked.providers.mockResolvedValue([provider()])
+    mocked.providers.mockResolvedValueOnce([provider()]).mockResolvedValueOnce([provider({ enabled: false })])
     mocked.setPluginEnabled.mockResolvedValue(provider({ enabled: false }))
     render(<DictSettings />)
 

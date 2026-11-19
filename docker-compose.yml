@@ -1,6 +1,7 @@
 # 单词本（quan_word）容器编排
 #
 # 用法：
+#   首次部署：复制 config.example.yaml 为 config.yaml，并设置 server.auth_key。
 #   docker compose up -d --build     # 构建并启动
 #   open http://localhost:3000       # 访问应用
 #   docker compose logs -f           # 查看日志
@@ -21,17 +22,19 @@ services:
       # 本地目录直接挂载：数据库文件在 ./data/quan_word.db，可直接用 sqlite3 查看/备份/修改
       # （macOS/Windows Docker Desktop 无需处理权限；Linux 若容器无写权限：sudo chown -R 1000:1000 data）
       - ./data:/app/data
-    # 需要自定义配置（auth_key、数据库等）时：把 config.example.yaml 复制为 ./config.yaml
-    # 按需修改，然后取消注释下方两行：
-    # volumes:
-    #   - ./config.yaml:/app/config.yaml:ro
-    # environment:
-    #   QUAN_WORD_CONFIG: /app/config.yaml
+      # 宿主机配置只读挂载；缺文件时停止部署。
+      - type: bind
+        source: ./config.yaml
+        target: /app/config.yaml
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      QUAN_WORD_CONFIG: /app/config.yaml
     restart: unless-stopped
 
   # 切换 PostgreSQL（可选，默认 SQLite）：
-  # 1. 取消注释下面两个块（postgres 服务 + quan-word 的 depends_on/database.url）
-  # 2. 取消注释 quan-word 的 config.yaml 挂载，并把 config.yaml 中 database.url 改为
+  # 启用下面的 PostgreSQL 服务、声明 postgres-data 卷，并把 config.yaml 中 database.url 改为
   #    postgres://postgres:postgres@postgres:5432/quan_word
   # postgres:
   #   image: postgres:17-alpine
@@ -41,8 +44,10 @@ services:
   #     POSTGRES_PASSWORD: postgres
   #   volumes:
   #     - postgres-data:/var/lib/postgresql/data
-  # healthcheck:
-  #   test: ["CMD-SHELL", "pg_isready -U postgres"]
-  #   interval: 5s
-  #   timeout: 3s
-  #   retries: 10
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U postgres"]
+  #     interval: 5s
+  #     timeout: 3s
+  #     retries: 10
+# volumes:
+#   postgres-data:

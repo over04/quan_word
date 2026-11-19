@@ -4,7 +4,7 @@ pub struct ServerConfig {
     pub host: String,
     pub port: u16,
     /// 访问密钥：设置后所有 /api 请求必须携带 Authorization: Bearer <密钥>
-    /// （或 X-Api-Key 头）；未设置（None/空）则不启用鉴权。
+    /// （或 X-Api-Key 头）；未设置则关闭鉴权，设置时必须为非空可见 ASCII（不含空格）。
     #[serde(default)]
     pub auth_key: Option<String>,
 }

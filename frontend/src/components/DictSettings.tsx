@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { dict, type DictPluginDetailResp, type DictProviderResp } from '../api'
+import { clearDictCache } from '../dictCache'
 import { clearSuggestCache } from '../hooks/useDictSuggest'
 import { toast } from '../toast'
 import DictPluginDetail from './DictPluginDetail'
@@ -36,7 +37,7 @@ export default function DictSettings() {
         setError(e instanceof Error ? e.message : '加载失败')
       }
     } finally {
-      if (alive.current && seq === loadSeq.current && !silent) setLoading(false)
+      if (alive.current && seq === loadSeq.current) setLoading(false)
     }
   }
 
@@ -101,8 +102,10 @@ export default function DictSettings() {
     setPending(plugin.id)
     try {
       const updated = await dict.setPluginEnabled(plugin.id, !plugin.enabled)
+      clearDictCache()
       clearSuggestCache()
       setPlugins((current) => current.map((item) => (item.id === updated.id ? updated : item)))
+      void load(true)
     } catch (e) {
       toast(e instanceof Error ? e.message : '操作失败')
     } finally {
@@ -116,6 +119,7 @@ export default function DictSettings() {
     setPending('import')
     try {
       const list = await dict.importPlugin(file)
+      clearDictCache()
       clearSuggestCache()
       setPlugins(list)
       setError('')
@@ -134,6 +138,7 @@ export default function DictSettings() {
     setPending(plugin.id)
     try {
       const list = await dict.deletePlugin(plugin.id)
+      clearDictCache()
       clearSuggestCache()
       setPlugins(list)
       setError('')

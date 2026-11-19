@@ -212,7 +212,7 @@ pub trait SearchTransport {
 4. 超过 `dict.max_plugins` 的包被拒绝。
 5. 解析失败/主机越界/能力与配方不一致的包只影响自己，其它包照常装载。
 
-`dict.providers` 为空表示启用全部已安装插件；非空时按该数组顺序启用并聚合，未知 id 启动报错。`providers` 只影响“启用/顺序”，不阻止安装；设置页的运行时启停覆盖它并持久化到 `data/plugins/.state.json`。
+`dict.providers` 为空表示启用全部已安装插件；非空时按该数组顺序启用并聚合，启动时缺少已配置的 id 会记录警告并跳过，不影响服务启动。`providers` 只影响“启用/顺序”，不阻止安装；设置页的运行时启停覆盖它并持久化到 `data/plugins/.state.json`。
 
 ## 自动发现、导入与删除
 

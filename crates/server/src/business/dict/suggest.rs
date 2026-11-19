@@ -19,7 +19,8 @@ impl SuggestService {
         let word = validate_word(word.unwrap_or(""), dict.config.max_word_len)?;
         let key = word.to_lowercase();
         let now = Instant::now();
-        if let Some(hit) = dict.suggest_cache.get(&key, now) {
+        let generation = dict.suggest_cache.generation();
+        if let Some(hit) = dict.suggest_cache.get(generation, &key, now) {
             return Ok(DictSuggestResp {
                 word,
                 suggestions: hit,
@@ -32,7 +33,7 @@ impl SuggestService {
             dict.engine.suggest(&word, &ids).await
         };
         dict.suggest_cache
-            .insert(key, suggestions.clone(), Instant::now());
+            .insert(generation, key, suggestions.clone(), Instant::now());
         Ok(DictSuggestResp { word, suggestions })
     }
 }

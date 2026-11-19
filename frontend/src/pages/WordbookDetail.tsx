@@ -20,6 +20,7 @@ import WordFormModal from '../components/WordFormModal'
 import SettingsPanel from '../components/SettingsPanel'
 import ToastHost from '../components/Toast'
 import { toast } from '../toast'
+import { loadReaderPageSize } from '../readerPageSize'
 import {
   ArrowLeftIcon,
   BookIcon,
@@ -34,11 +35,6 @@ import {
 interface Props {
   bookId: number
   onBack: () => void
-}
-
-function loadPageSize(): number {
-  const v = Number(localStorage.getItem('qw_page_size'))
-  return Number.isFinite(v) && v >= 10 && v <= 200 ? v : 30
 }
 
 function loadFontScale(): number {
@@ -158,7 +154,7 @@ export default function WordbookDetail({ bookId, onBack }: Props) {
     if (startPage === null) return
     localStorage.setItem(`qw_page_${bookId}`, String(startPage))
   }, [startPage, bookId])
-  const [pageSize, setPageSize] = useState<number>(loadPageSize)
+  const [pageSize, setPageSize] = useState<number>(loadReaderPageSize)
   const [fontScale, setFontScale] = useState<number>(loadFontScale)
   // 遮挡：基线（整书全隐藏）+ 手动例外（点过的词）；按书持久化到 localStorage
   const [cover, setCover] = useState<CoverState>(() => loadCover(bookId))

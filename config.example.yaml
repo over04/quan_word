@@ -1,11 +1,11 @@
 # 运行配置模板：复制为 config.yaml 后按需修改（config.yaml 已被 git 忽略）。
-# 也可通过环境变量 QUAN_WORD_CONFIG 指定其他配置路径；缺省读 ./config.yaml，
-# 文件不存在时使用内建默认（sqlite + 0.0.0.0:3000）。
+# 可通过 QUAN_WORD_CONFIG 指定路径；该文件不存在或不可读时不启动。
+# 未设置环境变量时读 ./config.yaml，只有这时缺文件才使用内建默认。
 server:
   host: "0.0.0.0"
   port: 3000
-  # 访问密钥：设置后所有 /api 请求必须携带 Authorization: Bearer <密钥>（或 X-Api-Key 头），未设置则不启用
-  # auth_key: "change-me"
+  # 对外部署时设置访问密钥（非空可见 ASCII，不含空格）。缺省不启用 /api 鉴权。
+  # auth_key: "<替换成你自己的密钥>"
 database:
   url: "sqlite://./data/quan_word.db?mode=rwc"
 # 切换 PostgreSQL 时改为：

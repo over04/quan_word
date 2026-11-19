@@ -110,34 +110,62 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
   }
 }
 
-async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const headers: Record<string, string> = { ...(init?.headers as Record<string, string> | undefined) }
+const WORDBOOKS_URL = '/api/wordbooks'
+const validApiKey = (key: string) => key.length > 0 && !/[^!-~]/.test(key)
+
+function authenticatedInit(key: string | null, init?: RequestInit): RequestInit {
+  const headers = new Headers(init?.headers)
+  if (key && validApiKey(key)) headers.set('Authorization', 'Bearer ' + key)
+  // FormData 的 Content-Type 由浏览器加上 boundary。
+  if (typeof init?.body === 'string') headers.set('Content-Type', 'application/json')
+  return { ...init, headers }
+}
+
+async function checkResponse(res: Response) {
+  if (res.ok) return
+  let msg = '请求失败 (' + res.status + ')'
+  try {
+    const data = await res.json()
+    if (data?.error) msg = data.error
+  } catch {
+    // 非 JSON 错误响应，保留默认消息。
+  }
+  throw new Error(msg)
+}
+
+async function sessionRequest(path: string, init?: RequestInit): Promise<Response> {
   const key = getApiKey()
-  if (key) headers['Authorization'] = `Bearer ${key}`
-  // 仅 JSON 字符串 body 需要手动设 Content-Type；FormData 由浏览器自动带 boundary
-  if (init?.body && typeof init.body === 'string') headers['Content-Type'] = 'application/json'
-  const res = await request(path, { ...init, headers })
+  const res = await request(path, authenticatedInit(key, init))
   if (res.status === 401) {
-    setApiKey(null)
-    window.dispatchEvent(new Event('qw:auth-required'))
+    // 旧请求无权使已经换过密钥的会话失效。
+    if (getApiKey() === key) {
+      setApiKey(null)
+      window.dispatchEvent(new Event('qw:auth-required'))
+    }
     throw new Error('需要访问密钥')
   }
-  if (!res.ok) {
-    let msg = `请求失败 (${res.status})`
-    try {
-      const data = await res.json()
-      if (data?.error) msg = data.error
-    } catch {
-      // 非 JSON 错误响应，保留默认消息
-    }
-    throw new Error(msg)
-  }
+  await checkResponse(res)
+  return res
+}
+
+/** 验证候选密钥，不写入会话，也不触发全局登录事件。 */
+export async function verifyApiKey(key: string): Promise<void> {
+  if (!validApiKey(key)) throw new Error('访问密钥只能包含可见 ASCII 字符，不能含空格')
+  const res = await request(WORDBOOKS_URL, authenticatedInit(key, { cache: 'no-store' }))
+  if (res.status === 401) throw new Error('密钥无效，请检查后重试')
+  await checkResponse(res)
+  const list: unknown = await res.json().catch(() => null)
+  if (!Array.isArray(list)) throw new Error('服务器响应格式异常，请稍后重试')
+}
+
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await sessionRequest(path, init)
   if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
 }
 
 export const wordbooks = {
-  list: () => api<Wordbook[]>('/api/wordbooks'),
+  list: () => api<Wordbook[]>(WORDBOOKS_URL),
   get: (id: number) => api<Wordbook>(`/api/wordbooks/${id}`),
   create: (req: CreateWordbookReq) =>
     api<Wordbook>('/api/wordbooks', { method: 'POST', body: JSON.stringify(req) }),
@@ -225,25 +253,7 @@ export const words = {
   },
   /** 下载导入模板并触发浏览器保存 */
   downloadTemplate: async (bookId: number, format: 'csv' | 'xlsx') => {
-    const headers: Record<string, string> = {}
-    const key = getApiKey()
-    if (key) headers['Authorization'] = `Bearer ${key}`
-    const res = await request(`/api/wordbooks/${bookId}/words/template?format=${format}`, { headers })
-    if (res.status === 401) {
-      setApiKey(null)
-      window.dispatchEvent(new Event('qw:auth-required'))
-      throw new Error('需要访问密钥')
-    }
-    if (!res.ok) {
-      let msg = `请求失败 (${res.status})`
-      try {
-        const data = await res.json()
-        if (data?.error) msg = data.error
-      } catch {
-        // 非 JSON 错误响应，保留默认消息
-      }
-      throw new Error(msg)
-    }
+    const res = await sessionRequest(`/api/wordbooks/${bookId}/words/template?format=${format}`)
     const blob = await res.blob()
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')

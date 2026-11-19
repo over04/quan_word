@@ -68,6 +68,9 @@ export default function DictDetailPage({
   onRegisterBack,
 }: Props) {
   const [providers, setProviders] = useState<ProviderId[]>([])
+  const [providersLoading, setProvidersLoading] = useState(true)
+  const [providersError, setProvidersError] = useState('')
+  const [providersAttempt, setProvidersAttempt] = useState(0)
   const [picked, setPicked] = useState<ProviderId | null>(null)
   const [step, setStep] = useState<Step>('detail')
   const [pickedBook, setPickedBook] = useState<Wordbook | null>(null)
@@ -81,20 +84,23 @@ export default function DictDetailPage({
 
   useEffect(() => {
     let alive = true
+    setProvidersLoading(true)
+    setProvidersError('')
     getProviders()
       .then((list) => {
         if (alive) setProviders(list.filter((item) => item.enabled).map((item) => item.id))
       })
-      .catch(() => {
-        if (alive) setProviders([])
+      .catch((e: unknown) => {
+        if (alive) setProvidersError(e instanceof Error ? e.message : '词典来源加载失败')
       })
+      .finally(() => { if (alive) setProvidersLoading(false) })
     return () => {
       alive = false
     }
-  }, [])
+  }, [providersAttempt])
 
   // 详情是「打开即查」：防抖传 0，不让骨架白等 500ms
-  const { entries, loading, error: lookupError, refresh } = useDictLookup(
+  const { entries, errors, loading, settled, error: lookupError, refresh } = useDictLookup(
     word,
     providers,
     providers.length > 0,
@@ -109,6 +115,18 @@ export default function DictDetailPage({
     return entries.find((item) => item.provider === picked) ?? entries[0]
   }, [entries, picked])
 
+  const detailLoading = providersLoading || loading || (
+    providers.length > 0 && word.trim().length >= 2 && !settled && !lookupError
+  )
+  const detailError = providersError || lookupError || (!entry && errors.length ? '词典来源均未返回结果' : '')
+
+  function retryLookup() {
+    if (providersError) {
+      setProvidersAttempt((attempt) => attempt + 1)
+    } else {
+      refresh()
+    }
+  }
   const groups = useMemo(() => groupDefinitions(entry?.definitions ?? []), [entry])
 
   /** 关闭/步骤回退：definitions → books → detail → 关闭；单本书时没有选书步骤 */
@@ -430,7 +448,7 @@ export default function DictDetailPage({
               </div>
             )}
 
-            {loading ? (
+            {detailLoading ? (
               // 骨架按最终内容高度预留（释义 + 例句 + 来源 ≈ 380px），加载完成不塌陷
               <div className="mt-10 min-h-[380px] space-y-3 animate-pulse" aria-hidden="true">
                 <div className="h-3 w-16 rounded bg-sand/60" />
@@ -441,91 +459,98 @@ export default function DictDetailPage({
                 <div className="h-4 rounded bg-sand/40" />
                 <div className="h-4 w-2/3 rounded bg-sand/40" />
               </div>
-            ) : lookupError ? (
-              <div className="mt-10 rounded-2xl border border-charcoal/10 bg-white/70 px-6 py-8 text-center">
-                <p className="text-sm text-red-600">{lookupError}</p>
+            ) : detailError ? (
+              <div role="status" className="mt-10 rounded-2xl border border-charcoal/10 bg-white/70 px-6 py-8 text-center">
+                <p className="text-sm text-red-600">{detailError}</p>
+                {errors.length > 0 && !entry && (
+                  <ul className="mt-2 space-y-1 text-xs text-charcoal/60">
+                    {errors.map(({ provider, label, message }) => <li key={provider}>{label}：{message}</li>)}
+                  </ul>
+                )}
                 <button
                   type="button"
-                  onClick={refresh}
+                  onClick={retryLookup}
                   className="mt-4 inline-flex items-center gap-1.5 min-h-11 px-5 rounded-full border border-charcoal/20 text-sm font-medium text-charcoal/75 hover:bg-white hover:border-charcoal/40 active:scale-95 transition-all"
                 >
                   <RefreshIcon className="w-3.5 h-3.5" />
                   重试
                 </button>
               </div>
+            ) : !entry ? (
+              <p className="mt-10 text-center text-sm text-charcoal/60">
+                {providers.length === 0 ? '没有已启用的词典来源' : '没有查到这个词'}
+              </p>
             ) : (
-              entry && (
-                <>
-                  {entry.definitions.length > 0 && (
-                    <section className="mt-8">
-                      <h3 className="text-xs font-bold tracking-widest text-charcoal/55 uppercase">
-                        释义
-                      </h3>
-                      <div className="mt-3 space-y-4">
-                        {visibleGroups.map((group) => (
-                          <div key={group.pos || 'none'}>
-                            {group.pos && (
-                              <span className="inline-block mb-1.5 px-2 py-0.5 rounded-md bg-sand/60 text-charcoal/65 text-[11px] font-medium">
-                                {group.pos}
-                              </span>
-                            )}
-                            <ol className="space-y-1.5">
-                              {group.items.map(({ index, definition, number }) => (
-                                <li
-                                  key={index}
-                                  style={{ animationDelay: `${Math.min(number - 1, 8) * 35}ms` }}
-                                  className="flex items-start gap-2.5 text-[15px] text-charcoal/85 leading-relaxed break-words animate-result-in"
-                                >
-                                  <span className="shrink-0 w-5 text-right text-xs text-charcoal/35 tabular-nums">
-                                    {number}.
-                                  </span>
-                                  <span className="min-w-0">{definition.meaning}</span>
-                                </li>
-                              ))}
-                            </ol>
-                          </div>
-                        ))}
-                      </div>
-                      {totalCount > shownCount && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setShowAll(true)
-                            toast(`已展开全部 ${totalCount} 条释义`)
-                          }}
-                          className="mt-4 min-h-11 px-4 rounded-full border border-charcoal/15 text-xs font-medium text-charcoal/65 hover:border-charcoal/30 hover:text-charcoal active:bg-sand/40 active:scale-95 transition-all"
-                        >
-                          展开全部 {totalCount} 条
-                        </button>
-                      )}
-                    </section>
-                  )}
+              <>
+                {entry.definitions.length > 0 && (
+                  <section className="mt-8">
+                    <h3 className="text-xs font-bold tracking-widest text-charcoal/55 uppercase">
+                      释义
+                    </h3>
+                    <div className="mt-3 space-y-4">
+                      {visibleGroups.map((group) => (
+                        <div key={group.pos || 'none'}>
+                          {group.pos && (
+                            <span className="inline-block mb-1.5 px-2 py-0.5 rounded-md bg-sand/60 text-charcoal/65 text-[11px] font-medium">
+                              {group.pos}
+                            </span>
+                          )}
+                          <ol className="space-y-1.5">
+                            {group.items.map(({ index, definition, number }) => (
+                              <li
+                                key={index}
+                                style={{ animationDelay: `${Math.min(number - 1, 8) * 35}ms` }}
+                                className="flex items-start gap-2.5 text-[15px] text-charcoal/85 leading-relaxed break-words animate-result-in"
+                              >
+                                <span className="shrink-0 w-5 text-right text-xs text-charcoal/35 tabular-nums">
+                                  {number}.
+                                </span>
+                                <span className="min-w-0">{definition.meaning}</span>
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      ))}
+                    </div>
+                    {totalCount > shownCount && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowAll(true)
+                          toast(`已展开全部 ${totalCount} 条释义`)
+                        }}
+                        className="mt-4 min-h-11 px-4 rounded-full border border-charcoal/15 text-xs font-medium text-charcoal/65 hover:border-charcoal/30 hover:text-charcoal active:bg-sand/40 active:scale-95 transition-all"
+                      >
+                        展开全部 {totalCount} 条
+                      </button>
+                    )}
+                  </section>
+                )}
 
-                  {entry.examples.length > 0 && (
-                    <section className="mt-10">
-                      <h3 className="text-xs font-bold tracking-widest text-charcoal/55 uppercase">
-                        例句
-                      </h3>
-                      <div className="mt-3 space-y-4">
-                        {entry.examples.slice(0, MAX_EXAMPLES).map((example, index) => (
-                          <div
-                            key={index}
-                            style={{ animationDelay: `${index * 70}ms` }}
-                            className="border-l-2 border-clay/40 pl-4 text-[15px] text-charcoal/75 leading-relaxed break-words animate-result-in"
-                          >
-                            {example.text}
-                            {example.translation && (
-                              <span className="block mt-1 text-sm text-charcoal/55">
-                                {example.translation}
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  )}
-                </>
-              )
+                {entry.examples.length > 0 && (
+                  <section className="mt-10">
+                    <h3 className="text-xs font-bold tracking-widest text-charcoal/55 uppercase">
+                      例句
+                    </h3>
+                    <div className="mt-3 space-y-4">
+                      {entry.examples.slice(0, MAX_EXAMPLES).map((example, index) => (
+                        <div
+                          key={index}
+                          style={{ animationDelay: `${index * 70}ms` }}
+                          className="border-l-2 border-clay/40 pl-4 text-[15px] text-charcoal/75 leading-relaxed break-words animate-result-in"
+                        >
+                          {example.text}
+                          {example.translation && (
+                            <span className="block mt-1 text-sm text-charcoal/55">
+                              {example.translation}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </section>
+                )}
+              </>
             )}
           </div>
 
@@ -534,11 +559,11 @@ export default function DictDetailPage({
               <button
                 type="button"
                 onClick={startJoin}
-                disabled={loading || !entry || allPresent}
+                disabled={detailLoading || !entry || allPresent}
                 className="w-full inline-flex items-center justify-center gap-2 min-h-12 px-6 rounded-full bg-charcoal text-ivory text-sm font-medium hover:bg-charcoal/90 active:scale-[0.99] transition-all disabled:bg-charcoal/15 disabled:text-charcoal/55 disabled:hover:bg-charcoal/15"
               >
                 <PlusIcon className="w-4 h-4" />
-                {loading ? '加载中…' : allBooks.length === 0 ? '创建单词书' : allPresent ? '已收录' : '加入词书'}
+                {detailLoading ? '加载中…' : allBooks.length === 0 ? '创建单词书' : allPresent ? '已收录' : '加入词书'}
               </button>
             </div>
           </div>

@@ -70,7 +70,7 @@ cd frontend && npm run test && npm run build
 
 ### 配置
 
-复制 `config.example.yaml` 为 `config.yaml`（已 git 忽略）后修改；或通过环境变量 `QUAN_WORD_CONFIG` 指定路径。切换 PostgreSQL 只需改 `database.url`。
+复制 `config.example.yaml` 为 `config.yaml`（已 git 忽略）后修改。显式设置 `QUAN_WORD_CONFIG` 时，该文件缺失或不可读会阻止启动；未设置时，只有缺省路径缺文件才会回退到默认配置。对外部署须配置 `server.auth_key`（非空可见 ASCII，不含空格）。切换 PostgreSQL 时修改 `database.url`。
 
 ### 前后端契约
 
@@ -114,13 +114,16 @@ cargo run -p xtask -- validate-plugins ./data/plugins  # 校验运行时目录
 ### Docker（推荐）
 
 ```bash
+# 首次部署才复制；已有 config.yaml 时直接编辑，不要覆盖。
+cp -n config.example.yaml config.yaml
+# 对外部署：先编辑 config.yaml，设置 server.auth_key。
 docker compose up -d --build   # 构建并启动，访问 http://localhost:3000
 ```
 
 - 镜像约 20MB（scratch + musl 静态链接二进制，仅含可执行文件与 CA 证书）
 - 构建缓存：cargo registry 与 target 挂 BuildKit cache mount，依赖未变时改码重建约 1 分钟
 - 数据持久化在 `./data/`（SQLite + `plugins/`），可直接 `sqlite3 data/quan_word.db` 查看/备份
-- 自定义配置（auth_key / 切换 PostgreSQL）见 docker-compose.yml 内注释
+- Compose 必须将 `./config.yaml` 只读挂载到 `/app/config.yaml`，并通过 `QUAN_WORD_CONFIG` 显式读取。改配置后用 `docker compose up -d --force-recreate quan-word` 重建服务，保留 `./data/`。
 
 ### 本地构建
 

@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 use chrono::Utc;
 use entity::word;
 use lexicon::definition::Definition;
-use sea_orm::{DatabaseConnection, Set};
+use sea_orm::{DatabaseConnection, Set, TransactionTrait};
 
 use super::dto::batch::BatchDeleteWordsResp;
 use super::dto::batch_tag::BatchTagWordsReq;
@@ -36,6 +36,15 @@ use lexicon::word_pos::WordPos;
 
 /// 导入会话 token 序号（与纳秒时间戳拼合防碰撞；token 非安全边界，仅会话凭据）。
 static IMPORT_TOKEN_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// 不使用向量下标：CSV 会跳过空行、且记录可能跨多个物理行。
+fn apply_import_updates(rows: &mut [ImportRowData], updates: &[ImportRowData]) {
+    for fix in updates {
+        if let Ok(index) = rows.binary_search_by_key(&fix.row, |row| row.row) {
+            rows[index] = fix.clone();
+        }
+    }
+}
 
 /// 生成导入预览会话 token。
 fn new_import_token() -> String {
@@ -279,7 +288,7 @@ impl WordService {
         Ok(())
     }
 
-    /// 解析行数据并构建导入计划：行级校验分类 → 按拼写分组 → 标签差异、重复判定（预览与执行共用）。
+    /// 解析行数据并构建导入计划：预览时按拼写分组，计算标签差异与重复项。
     async fn build_import_plan(
         state: &AppState,
         book_id: i32,
@@ -348,7 +357,7 @@ impl WordService {
             Self::build_views(state, book_id, &rows).await?;
         let (page_rows, total_pages) = Self::page_groups(views, page, page_size);
         let token = new_import_token();
-        // 缓存全部解析行（含全空行，行号 = 索引 + 2；updates 映射依赖此不变量）
+        // 缓存全部解析记录，按物理起始行升序，供行级修正二分查找。
         let dto_rows: Vec<ImportRowData> = rows.iter().map(|r| r.to_dto()).collect();
         let mut m = state.import_cache.lock();
         m.retain(|_, e| {
@@ -492,16 +501,7 @@ impl WordService {
             };
             // Arc 独占（缓存条目唯一持有）时零拷贝原地修改；出锁返回 clone
             let rows = Arc::make_mut(&mut entry.rows);
-            for fix in &req.updates {
-                // 行号 < 2 不可能指向数据行，显式忽略（防 usize 减法下溢 panic）
-                if fix.row < 2 {
-                    continue;
-                }
-                let idx = fix.row as usize - 2;
-                if let Some(r) = rows.get_mut(idx) {
-                    *r = fix.clone();
-                }
-            }
+            apply_import_updates(rows, &req.updates);
             rows.clone()
         };
         let rows: Vec<import::RowData> = dto_rows.iter().map(import::RowData::from_dto).collect();
@@ -547,99 +547,91 @@ impl WordService {
             Some(e) if e.book_id == book_id && e.created_at.elapsed() < ttl => e,
             _ => return Err(WordError::ImportSessionInvalid),
         };
-        let dto_rows: Vec<ImportRowData> = entry.rows.to_vec();
-        let rows: Vec<import::RowData> = dto_rows.iter().map(import::RowData::from_dto).collect();
-        let plan = Self::build_import_plan(state, book_id, &rows).await?;
-        if plan.groups.is_empty() {
-            return Ok(ImportResp {
-                imported: 0,
-                updated: 0,
-                skipped_errors: plan.errors.len() as u64,
-                skipped_duplicates: 0,
-                created_tags: 0,
-            });
+        let rows: Vec<_> = entry.rows.iter().map(import::RowData::from_dto).collect();
+        let (prepared, errors) = import::prepare_rows(&rows);
+        let groups = import::group_rows(&prepared);
+        let update_rows: HashSet<_> = req.update_rows.into_iter().collect();
+        let txn = db.begin().await?;
+        let spellings = WordRepo::find_spellings(&txn, book_id).await?;
+        let mut skipped_duplicates = 0;
+        let mut eligible = Vec::new();
+        for group in &groups {
+            let existing = spellings.get(&group.spelling.to_lowercase()).copied();
+            if existing.is_some()
+                && !group
+                    .row_nos
+                    .iter()
+                    .any(|&row| update_rows.contains(&(row as u64)))
+            {
+                skipped_duplicates += 1;
+                continue;
+            }
+            eligible.push((group, existing));
         }
-        // 标签：缺失名批量创建（已存在的复用；过滤预览后并发创建的，避免撞 UNIQUE 约束）
-        let mut tag_map = WordRepo::find_tag_map(db, book_id).await?;
-        let to_create: Vec<String> = plan
-            .new_tags
+        let mut tags = WordRepo::find_tag_map(&txn, book_id).await?;
+        let mut seen = HashSet::new();
+        let to_create = eligible
             .iter()
-            .filter(|n| !tag_map.contains_key(*n))
+            .flat_map(|(group, _)| &group.tag_names)
+            .filter(|name| !tags.contains_key(*name) && seen.insert(*name))
             .cloned()
-            .collect();
-        tag_map.extend(WordRepo::insert_tags(db, book_id, &to_create).await?);
-        // 重复判定以执行时最新数据为准
-        let spellings = WordRepo::find_spellings(db, book_id).await?;
+            .collect::<Vec<_>>();
+        let created = WordRepo::insert_tags(&txn, book_id, &to_create).await?;
+        let created_tags = created.len() as u64;
+        tags.extend(created);
+        let dup_ids: Vec<_> = eligible.iter().filter_map(|(_, id)| *id).collect();
+        let mut existing_links = WordRepo::find_tag_ids_by_word_ids(&txn, &dup_ids).await?;
         let now = Utc::now();
-        let update_set: HashSet<usize> = req.update_rows.iter().map(|r| *r as usize).collect();
-        let mut inserts: Vec<(word::ActiveModel, Vec<i32>)> = Vec::new();
-        let mut update_targets: Vec<(usize, i32, Vec<i32>)> = Vec::new(); // (组首行号, existing_id, file_tag_ids)
-        let mut dup_total = 0u64; // 执行时的重复组总数（更新 + 跳过）
-        for group in &plan.groups {
-            let tag_ids: Vec<i32> = group
+        let mut inserts = Vec::new();
+        let mut updates = Vec::new();
+        for (group, existing) in eligible {
+            let mut tag_ids = group
                 .tag_names
                 .iter()
-                .map(|n| *tag_map.get(n).expect("标签映射应完整"))
-                .collect();
-            if let Some(existing_id) = spellings.get(&group.spelling.to_lowercase()) {
-                dup_total += 1;
-                // 组内任一行被勾选「更新」→ 整组更新
-                if group.row_nos.iter().any(|rn| update_set.contains(rn)) {
-                    update_targets.push((group.row_nos[0], *existing_id, tag_ids));
+                .map(|name| tags[name])
+                .collect::<Vec<_>>();
+            let mut model = if let Some(word_id) = existing {
+                if let Some(links) = existing_links.remove(&word_id) {
+                    tag_ids.extend(links);
+                    tag_ids.sort_unstable();
+                    tag_ids.dedup();
                 }
+                WordRepo::find_by_id(&txn, word_id)
+                    .await?
+                    .ok_or(WordError::WordNotFound { word_id })?
+                    .into()
             } else {
-                inserts.push((
-                    word::ActiveModel {
-                        wordbook_id: Set(book_id),
-                        spelling: Set(group.spelling.clone()),
-                        phonetic: Set(group.phonetic.clone()),
-                        definitions: Set(serde_json::to_value(&group.definitions)?),
-                        example: Set(group.example.clone()),
-                        created_at: Set(now),
-                        updated_at: Set(now),
-                        ..Default::default()
-                    },
-                    tag_ids,
-                ));
-            }
-        }
-        // 现有标签（合并用）：一次查询全部更新目标，避免 N+1
-        let dup_word_ids: Vec<i32> = update_targets.iter().map(|(_, id, _)| *id).collect();
-        let existing_links = WordRepo::find_tag_ids_by_word_ids(db, &dup_word_ids).await?;
-        let mut updates: Vec<(word::ActiveModel, Vec<i32>)> =
-            Vec::with_capacity(update_targets.len());
-        for (first_row, word_id, file_tag_ids) in update_targets {
-            let group = plan
-                .groups
-                .iter()
-                .find(|g| g.row_nos[0] == first_row)
-                .expect("组首行号来自 plan.groups");
-            // 标签合并：现有 ∪ 文件，去重升序
-            let mut merged = existing_links.get(&word_id).cloned().unwrap_or_default();
-            merged.extend(file_tag_ids);
-            merged.sort_unstable();
-            merged.dedup();
-            let existing = WordRepo::find_by_id(db, word_id)
-                .await?
-                .ok_or(WordError::WordNotFound { word_id })?;
-            let mut model: word::ActiveModel = existing.into();
+                word::ActiveModel {
+                    wordbook_id: Set(book_id),
+                    created_at: Set(now),
+                    ..Default::default()
+                }
+            };
             model.spelling = Set(group.spelling.clone());
             model.phonetic = Set(group.phonetic.clone());
             model.definitions = Set(serde_json::to_value(&group.definitions)?);
             model.example = Set(group.example.clone());
             model.updated_at = Set(now);
-            updates.push((model, merged));
+            if existing.is_some() {
+                updates.push((model, tag_ids));
+            } else {
+                inserts.push((model, tag_ids));
+            }
         }
-        WordRepo::import_inserts(db, &inserts, &updates).await?;
-        // 新词影响列表页 word_count 与洗牌 id 集合：两个缓存都失效
-        state.invalidate_wordbooks();
-        state.shuffle_cache.lock().clear();
+        WordRepo::write_import(&txn, &inserts, &updates).await?;
+        txn.commit().await?;
+        if !inserts.is_empty() {
+            state.invalidate_wordbooks();
+        }
+        if !inserts.is_empty() || !updates.is_empty() {
+            state.shuffle_cache.lock().clear();
+        }
         Ok(ImportResp {
             imported: inserts.len() as u64,
             updated: updates.len() as u64,
-            skipped_errors: plan.errors.len() as u64,
-            skipped_duplicates: dup_total - updates.len() as u64,
-            created_tags: plan.new_tags.len() as u64,
+            skipped_errors: errors.len() as u64,
+            skipped_duplicates,
+            created_tags,
         })
     }
 

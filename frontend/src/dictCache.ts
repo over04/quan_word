@@ -21,12 +21,12 @@ const cache = new Map<string, CachedEntry>()
 /** in-flight 去重：同 key 并发复用同一 Promise（abort 只影响调用方自己的等待） */
 const inflight = new Map<string, Promise<DictLookupResp>>()
 
-/** 词典源列表：单例 Promise，整个页面生命周期只请求一次；失败后清空以便重试 */
+/** 只合并同时发出的来源请求，重新打开详情时读取最新状态。 */
 let providersPromise: Promise<DictProviderResp[]> | null = null
 
 /**
  * 插件重载后清空会话缓存：后端已清缓存/熔断，前端继续用旧释义会像「重载没生效」。
- * 同时丢掉源列表单例，下一次 getProviders 重新拉取。
+ * 同时丢掉进行中的来源请求，下一次 getProviders 重新拉取。
  */
 export function clearDictCache() {
   cache.clear()
@@ -34,20 +34,19 @@ export function clearDictCache() {
   providersPromise = null
 }
 
-/** 词典源列表（单例）。 */
 export function getProviders(): Promise<DictProviderResp[]> {
   if (!providersPromise) {
-    providersPromise = dict.providers().catch((e: unknown) => {
-      providersPromise = null
-      throw e
+    const request = dict.providers().finally(() => {
+      if (providersPromise === request) providersPromise = null
     })
+    providersPromise = request
   }
   return providersPromise
 }
 
-/** 缓存 key：词形 + 源集合（排序后拼接，源顺序不影响命中） */
+/** 缓存也区分来源顺序：聚合响应的顺序决定默认词条。 */
 function cacheKey(word: string, providers: ProviderId[]): string {
-  return `${word.trim().toLowerCase()}|${[...providers].sort().join(',')}`
+  return `${word.trim().toLowerCase()}|${providers.join(',')}`
 }
 
 /** 读缓存：过期删除；命中时把条目移到队尾（近似 LRU） */
@@ -123,15 +122,17 @@ export function lookupDict(
     if (hit) return Promise.resolve(hit)
   }
   const running = inflight.get(key)
-  if (running) return withSignal(running, opts?.signal)
+  if (!opts?.refresh && running) return withSignal(running, opts?.signal)
+  if (opts?.refresh) cache.delete(key)
   const request = dict
-    .lookup(word.trim(), providers)
+    .lookup(word.trim(), providers, opts?.refresh ? { refresh: true } : undefined)
     .then((data) => {
-      writeCache(key, data)
+      // 过期请求和全部来源失败的结果都不能写回。
+      if (inflight.get(key) === request && data.entries.length > 0) writeCache(key, data)
       return data
     })
     .finally(() => {
-      inflight.delete(key)
+      if (inflight.get(key) === request) inflight.delete(key)
     })
   inflight.set(key, request)
   return withSignal(request, opts?.signal)

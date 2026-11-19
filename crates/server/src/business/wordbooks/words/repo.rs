@@ -4,8 +4,9 @@ use chrono::Utc;
 use entity::{tag, word, word_tag, wordbook};
 use sea_orm::sea_query::{Condition, Expr, ExprTrait, Query};
 use sea_orm::{
-    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
-    QueryOrder, QuerySelect, Select, Set, TransactionTrait,
+    ActiveModelTrait, ColumnTrait, ConnectionTrait, DatabaseConnection, DatabaseTransaction,
+    EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect, Select, Set,
+    TransactionTrait,
 };
 
 use super::sort::SortField;
@@ -129,7 +130,7 @@ impl WordRepo {
     }
 
     pub async fn find_by_id(
-        db: &DatabaseConnection,
+        db: &impl ConnectionTrait,
         id: i32,
     ) -> Result<Option<word::Model>, sea_orm::DbErr> {
         word::Entity::find_by_id(id).one(db).await
@@ -155,7 +156,7 @@ impl WordRepo {
 
     /// 一批单词各自的标签 id（word_id → 排序去重的 tag_id 列表）。
     pub async fn find_tag_ids_by_word_ids(
-        db: &DatabaseConnection,
+        db: &impl ConnectionTrait,
         ids: &[i32],
     ) -> Result<HashMap<i32, Vec<i32>>, sea_orm::DbErr> {
         if ids.is_empty() {
@@ -262,7 +263,7 @@ impl WordRepo {
 
     /// 该书全部标签名 → id 映射。
     pub async fn find_tag_map(
-        db: &DatabaseConnection,
+        db: &impl ConnectionTrait,
         book_id: i32,
     ) -> Result<HashMap<String, i32>, sea_orm::DbErr> {
         Ok(tag::Entity::find()
@@ -277,7 +278,7 @@ impl WordRepo {
     /// 该书全部单词拼写（trim + 小写）→ id 映射（导入重复判定用）。
     /// 同拼写多词时保留最早（id 最小）的，保证更新目标确定性。
     pub async fn find_spellings(
-        db: &DatabaseConnection,
+        db: &impl ConnectionTrait,
         book_id: i32,
     ) -> Result<HashMap<String, i32>, sea_orm::DbErr> {
         let mut map = HashMap::new();
@@ -292,9 +293,9 @@ impl WordRepo {
         Ok(map)
     }
 
-    /// 批量创建标签（names 已去重校验）；返回 name → id（含全部传入项）。
+    /// 在导入事务中创建标签（names 已去重校验）；返回 name → id（含全部传入项）。
     pub async fn insert_tags(
-        db: &DatabaseConnection,
+        txn: &DatabaseTransaction,
         book_id: i32,
         names: &[String],
     ) -> Result<HashMap<String, i32>, sea_orm::DbErr> {
@@ -303,7 +304,6 @@ impl WordRepo {
             return Ok(map);
         }
         let now = Utc::now();
-        let txn = db.begin().await?;
         for name in names {
             let model = tag::ActiveModel {
                 wordbook_id: Set(book_id),
@@ -311,37 +311,34 @@ impl WordRepo {
                 created_at: Set(now),
                 ..Default::default()
             };
-            let saved = model.insert(&txn).await?;
+            let saved = model.insert(txn).await?;
             map.insert(saved.name, saved.id);
         }
-        txn.commit().await?;
         Ok(map)
     }
 
-    /// 事务执行导入落库：插入新词 + 更新重复词 + 写标签关联；任一步失败整体回滚。
+    /// 在同一导入事务内插入新词、更新重复词及标签关联。
     /// inserts: (word model, tag_ids)；updates: (word model, 合并后的 tag_ids 全集)。
-    pub async fn import_inserts(
-        db: &DatabaseConnection,
+    pub async fn write_import(
+        txn: &DatabaseTransaction,
         inserts: &[(word::ActiveModel, Vec<i32>)],
         updates: &[(word::ActiveModel, Vec<i32>)],
     ) -> Result<(), sea_orm::DbErr> {
         if inserts.is_empty() && updates.is_empty() {
             return Ok(());
         }
-        let txn = db.begin().await?;
         for (model, tag_ids) in inserts {
-            let saved = model.clone().insert(&txn).await?;
-            Self::insert_tag_links(&txn, saved.id, tag_ids).await?;
+            let saved = model.clone().insert(txn).await?;
+            Self::insert_tag_links(txn, saved.id, tag_ids).await?;
         }
         for (model, tag_ids) in updates {
-            let saved = model.clone().update(&txn).await?;
+            let saved = model.clone().update(txn).await?;
             word_tag::Entity::delete_many()
                 .filter(word_tag::Column::WordId.eq(saved.id))
-                .exec(&txn)
+                .exec(txn)
                 .await?;
-            Self::insert_tag_links(&txn, saved.id, tag_ids).await?;
+            Self::insert_tag_links(txn, saved.id, tag_ids).await?;
         }
-        txn.commit().await?;
         Ok(())
     }
 

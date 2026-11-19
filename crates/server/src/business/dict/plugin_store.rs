@@ -122,6 +122,7 @@ fn is_plugin_file(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .is_some_and(|name| !name.starts_with('.'));
     visible
+        && path.is_file()
         && path
             .extension()
             .is_some_and(|extension| extension == "json")

@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { setApiKey, wordbooks } from '../api'
+import { useId, useState } from 'react'
+import { setApiKey, verifyApiKey } from '../api'
 import Modal from './Modal'
 
 interface Props {
@@ -11,9 +11,11 @@ export default function ApiKeyModal({ onClose }: Props) {
   const [key, setKey] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const inputId = useId()
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
+    if (busy) return
     const k = key.trim()
     if (!k) {
       setError('请输入访问密钥')
@@ -21,20 +23,18 @@ export default function ApiKeyModal({ onClose }: Props) {
     }
     setBusy(true)
     setError('')
-    setApiKey(k)
     try {
-      // 用单词书列表验证密钥有效性：401 即无效
-      await wordbooks.list()
+      await verifyApiKey(k)
+      setApiKey(k)
       window.location.reload()
-    } catch {
-      setApiKey(null)
-      setError('密钥无效，请检查后重试')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '验证失败，请稍后重试')
       setBusy(false)
     }
   }
 
   return (
-    <Modal onClose={onClose} maxWidth="max-w-md">
+    <Modal onClose={() => { if (!busy) onClose() }} maxWidth="max-w-md">
       <form onSubmit={handleSubmit}>
         <h2 className="font-serif text-xl text-charcoal">需要访问密钥</h2>
         <p className="mt-2 text-sm text-charcoal/60 leading-relaxed">
@@ -42,8 +42,12 @@ export default function ApiKeyModal({ onClose }: Props) {
         </p>
 
         <div className="mt-6">
-          <label className="block text-xs font-medium text-charcoal/60 mb-1.5">访问密钥</label>
+          <label htmlFor={inputId} className="block text-xs font-medium text-charcoal/60 mb-1.5">访问密钥</label>
           <input
+            id={inputId}
+            type="password"
+            autoComplete="current-password"
+            readOnly={busy}
             value={key}
             onChange={(e) => setKey(e.target.value)}
             placeholder="请输入密钥"
@@ -62,6 +66,7 @@ export default function ApiKeyModal({ onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
+            disabled={busy}
             className="px-5 py-2 rounded-full border border-charcoal/20 text-charcoal text-sm font-medium hover:bg-white hover:border-charcoal/40 transition-all"
           >
             取消

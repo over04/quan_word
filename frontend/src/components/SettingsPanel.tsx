@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { MIN_READER_PAGE_SIZE, MAX_READER_PAGE_SIZE } from '../readerPageSize'
 
 interface Props {
   pageSize: number
@@ -10,8 +11,6 @@ interface Props {
   closing?: boolean
 }
 
-const PAGE_SIZE_MIN = 10
-const PAGE_SIZE_MAX = 200
 const FONT_MIN = 12
 const FONT_MAX = 28
 
@@ -51,8 +50,8 @@ export default function SettingsPanel({
         </div>
         <input
           type="range"
-          min={PAGE_SIZE_MIN}
-          max={PAGE_SIZE_MAX}
+          min={MIN_READER_PAGE_SIZE}
+          max={MAX_READER_PAGE_SIZE}
           step={10}
           value={draftSize}
           onChange={(e) => setDraftSize(Number(e.target.value))}
@@ -62,8 +61,8 @@ export default function SettingsPanel({
           aria-label="每次加载词数"
         />
         <div className="mt-1 flex justify-between text-[11px] text-charcoal/35 tabular-nums">
-          <span>{PAGE_SIZE_MIN}</span>
-          <span>{PAGE_SIZE_MAX}</span>
+          <span>{MIN_READER_PAGE_SIZE}</span>
+          <span>{MAX_READER_PAGE_SIZE}</span>
         </div>
       </div>
 

@@ -39,10 +39,17 @@ use super::state::DictState;
 pub struct DictService;
 
 impl DictService {
-    /// 已安装插件列表（含是否启用），顺序 = 注册表顺序（文件名排序）。
+    /// 已安装插件列表：启用源按查询优先级排列，禁用源保留注册表顺序。
     pub fn providers(dict: &DictState) -> Vec<DictProviderResp> {
-        dict.engine
-            .plugins()
+        let enabled = dict.enabled_ids();
+        let mut plugins = dict.engine.plugins();
+        plugins.sort_by_key(|plugin| {
+            enabled
+                .iter()
+                .position(|id| *id == plugin.id)
+                .unwrap_or(usize::MAX)
+        });
+        plugins
             .into_iter()
             .map(|plugin| provider_resp(dict, plugin))
             .collect()
@@ -276,7 +283,13 @@ async fn fetch_and_store(
 fn remove_external_by_id(dict: &DictState, id: &ProviderId) -> Result<usize, DictError> {
     let mut removed = 0;
     for path in dict.plugin_store.external_paths() {
-        let bytes = fs::read(&path).map_err(|error| DictError::PluginIo(error.to_string()))?;
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                tracing::warn!(path = %path.display(), %error, "插件读取失败，已跳过");
+                continue;
+            }
+        };
         let file = path
             .file_name()
             .map(|name| name.to_string_lossy().to_string())
@@ -634,6 +647,70 @@ mod tests {
 
     fn id(raw: &str) -> ProviderId {
         ProviderId::new(raw).unwrap()
+    }
+
+    #[tokio::test]
+    async fn configured_sources_can_be_removed_without_breaking_startup() {
+        let temp = std::env::temp_dir().join(format!(
+            "quan-word-plugin-review-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(temp.join("ignore.json")).unwrap();
+        let config = DictConfig {
+            plugins_dir: temp.clone(),
+            providers: vec!["youdao".into(), "baidu".into()],
+            ..DictConfig::default()
+        };
+        let calls = Arc::new(AtomicUsize::new(0));
+        let transport = Arc::new(MockTransport {
+            handler: ok_handler(&calls),
+        });
+        let dict = Arc::new(DictState::new(&config, transport.clone()).unwrap());
+        assert!(dict.enabled_ids().is_empty());
+        for id in ["baidu", "youdao"] {
+            let plugin = plugin_source(id);
+            DictService::import_plugin(&dict, &plugin.file, plugin.bytes)
+                .await
+                .unwrap();
+        }
+        let providers = DictService::providers(&dict);
+        assert_eq!(
+            providers
+                .into_iter()
+                .map(|plugin| plugin.id)
+                .collect::<Vec<_>>(),
+            [id("youdao"), id("baidu")]
+        );
+        DictService::delete_plugin(&dict, &id("youdao"))
+            .await
+            .unwrap();
+        let restarted = DictState::new(&config, transport).unwrap();
+        assert_eq!(restarted.enabled_ids(), [id("baidu")]);
+        std::fs::remove_dir_all(temp).unwrap();
+    }
+
+    #[test]
+    fn toggle_invalidates_suggestions_and_discards_old_responses() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let dict = state(engine(ok_handler(&calls)), &["youdao"]);
+        let cache = &dict.suggest_cache;
+        let now = std::time::Instant::now();
+        let result = vec![dict_core::suggestion::DictSuggestion {
+            word: "apple".into(),
+            summary: "苹果".into(),
+        }];
+        let old = cache.generation();
+        cache.insert(old, "empty".into(), Vec::new(), now);
+        cache.insert(old, "apple".into(), result.clone(), now);
+        assert!(cache.get(old, "empty", now).is_none());
+        assert!(cache.get(old, "apple", now).is_some());
+        dict.set_enabled(&id("youdao"), false).unwrap();
+        cache.insert(old, "apple".into(), result, now);
+        assert!(cache.get(cache.generation(), "apple", now).is_none());
     }
 
     #[test]
